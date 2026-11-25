@@ -55,7 +55,7 @@ jobs:
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: Przegladarka-Setup-Windows
-          path: dist-installer/Przegladarka-Setup-Windows.exe
+          name: Przegladarka-Setup-Windows-v0.1.1
+          path: dist-installer/Przegladarka-Setup-Windows-v0.1.1.exe
           if-no-files-found: error
           retention-days: 30
