@@ -580,40 +580,30 @@ class MainWindow(QMainWindow):
         info.setHtml("""
         <h2>Jak działa Przeglądarka</h2>
         <p><b>Wersja:</b> 0.5.0</p>
-        <p>Przeglądarka jest narzędziem do wyszukiwania i porządkowania publicznie
-        dostępnych wyników. Nie jest sklepem ani platformą sprzedażową.</p>
-        <h3>Połączenia internetowe</h3>
+        <p>Przeglądarka jest niezależnym narzędziem do odkrywania publicznych stron i ofert. Nie jest sklepem ani platformą sprzedażową.</p>
+        <h3>Własny mechanizm wyszukiwania</h3>
         <ul>
-          <li>Program wykonuje wyłącznie połączenia wychodzące HTTPS do wybranych
-          wyszukiwarek, aby wysłać zapytanie i odebrać wyniki.</li>
-          <li>Nie uruchamia serwera na komputerze i nie wymaga otwierania portów
-          na routerze ani przyjmowania połączeń z internetu.</li>
-          <li>Zapytanie jest przekazywane wybranym dostawcom wyszukiwania. Dostawcy
-          mogą przetwarzać je zgodnie z własnymi zasadami prywatności.</li>
-          <li>Otwieranie znalezionych stron odbywa się w domyślnej przeglądarce Windows.</li>
+          <li>Program nie korzysta z Google, Bing, Brave, DuckDuckGo ani innych zewnętrznych wyszukiwarek.</li>
+          <li>Robot odwiedza domeny startowe z lokalnego katalogu, publiczne mapy witryn, linki wewnętrzne i domeny wcześniej zweryfikowane.</li>
+          <li>Treść stron, rozpoznane produkty, ceny i źródła zapisuje w lokalnej bazie SQLite.</li>
+          <li>Można dodawać własne adresy sklepów i producentów. Katalog startowy jest punktem początkowym, a nie kompletnym indeksem Internetu.</li>
         </ul>
-        <h3>Niezależne odkrywanie stron</h3><ul><li>Wyszukiwarki są tylko jednym ze sposobów znalezienia pierwszych adresów startowych.</li><li>Następnie program sam analizuje publiczne podstrony, linki i mapy witryn oraz zapisuje domeny i oferty w lokalnej bazie SQLite.</li><li>Przy kolejnych zapytaniach może ponownie wykorzystać wcześniej odkryte domeny.</li><li>Wykrycie ceny lub słów handlowych nie potwierdza dostępności ani wiarygodności sprzedawcy.</li></ul><h3>Wyniki i ranking</h3>
+        <h3>Połączenia i prywatność</h3>
         <ul>
-          <li>Program nie sprzedaje miejsc w wynikach i nie pobiera opłat od sprzedawców.</li>
-          <li>Wyniki są zbierane z wybranych źródeł i łączone po adresie strony.</li>
-          <li>Wskazanie kilku wyszukiwarek oznacza, że każda z nich zwróciła ten adres;
-          nie jest to ocena jakości ani potwierdzenie niezależności ich indeksów.</li>
-          <li>Niektóre wyszukiwarki korzystają z cudzych indeksów lub syndykują wyniki,
-          dlatego źródła nie zawsze są od siebie niezależne.</li>
+          <li>Program wykonuje połączenia HTTPS bezpośrednio do publicznych witryn, które indeksuje.</li>
+          <li>Zapytanie jest przetwarzane lokalnie; witryny otrzymują zwykłe żądania pobrania publicznych stron.</li>
+          <li>Nie uruchamia serwera na komputerze i nie wymaga otwierania portów na routerze.</li>
+          <li>Otwieranie wybranej oferty odbywa się w domyślnej przeglądarce Windows.</li>
         </ul>
-        <h3>Ograniczenia i bezpieczeństwo</h3>
+        <h3>Weryfikacja wyników</h3>
         <ul>
-          <li>Nie gwarantujemy kompletności internetu ani aktualności ofert.</li>
-          <li>Automatyczne pobieranie może być ograniczane przez dostawców, limity,
-          CAPTCHA lub zmiany układu stron.</li>
-          <li>Program nie omija logowania, CAPTCHA ani zabezpieczeń antybotowych.</li>
-          <li>Nie wykonuje płatności, nie zamawia produktów i nie wysyła danych
-          do sprzedawców poza otwarciem wybranego adresu w przeglądarce.</li>
+          <li>Oferta jest pokazywana po dopasowaniu treści do zapytania i wykryciu danych produktu, ceny lub danych strukturalnych.</li>
+          <li>Wykryta cena nie gwarantuje aktualnej dostępności ani wiarygodności sprzedawcy.</li>
+          <li>Robot respektuje robots.txt, ogranicza tempo pobierania i nie omija logowania, CAPTCHA, paywalli ani zabezpieczeń antybotowych.</li>
+          <li>Nie gwarantuje kompletności Internetu. Wyniki zależą od katalogu startowego, publicznej dostępności stron i jakości ich map witryn.</li>
         </ul>
-        <p><b>Podpis cyfrowy:</b> plik instalacyjny wymaga certyfikatu wydawcy.
-        Podpis zostanie dodany do kompilacji po skonfigurowaniu certyfikatu
-        Authenticode. Brak podpisu nie jest ukrywany przez program.</p>
-        """)
+        <p><b>Podpis cyfrowy:</b> podpis Authenticode wymaga certyfikatu wydawcy. Brak podpisu jest jawnie oznaczany w artefaktach kompilacji.</p>
+        """))
         root.addWidget(info, 1)
         return tab
 
