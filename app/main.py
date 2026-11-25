@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Przeglądarka"
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.5.0"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -320,37 +320,24 @@ def merge_results(results):
 class SearchWorker(QThread):
     results_ready = Signal(list, list)
 
-    def __init__(self, query, engines):
+    def __init__(self, query, engines=None, seeds=None):
         super().__init__()
         self.query = query
-        self.engines = engines
+        self.seeds = seeds or []
 
-    def run(self):
-        results, errors = [], []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(9, len(self.engines) or 1)) as pool:
-            future_map = {
-                pool.submit(SEARCHERS[name], self.query): name for name in self.engines
-            }
-            for future in concurrent.futures.as_completed(future_map):
-                name = future_map[future]
-                try:
-                    results.extend(future.result())
-                except Exception as exc:
-                    errors.append(f"{name}: {exc}")
-        self.results_ready.emit(merge_results(results), errors)
-
-
-class DiscoveryWorker(QThread):
-    finished_data = Signal(dict)
-    def __init__(self, query, deep, seeds=None):
-        super().__init__()
-        self.query, self.deep, self.seeds = query, deep, seeds or []
     def run(self):
         try:
-            data = discover(self.query, deep=self.deep, extra_seeds=self.seeds)
+            data = discover(self.query, deep=True, extra_seeds=self.seeds)
+            results = data.get("results", [])
+            for item in results:
+                item["engine"] = "Robot własny"
+            errors = data.get("errors", [])
+            if not results:
+                errors = [f"Sprawdzono {data.get('pages_checked', 0)} stron; brak potwierdzonej oferty."] + errors
+            self.results_ready.emit(results, errors)
         except Exception as exc:
-            data = {"results": [], "sources": [], "pages_checked": 0, "seed_count": 0, "errors": [f"Błąd modułu odkrywania: {exc}"]}
-        self.finished_data.emit(data)
+            self.results_ready.emit([], [f"Błąd własnego indeksowania: {exc}"])
+
 
 class DiagnosticsWorker(QThread):
     diagnostics_ready = Signal(list)
@@ -386,7 +373,7 @@ class DiagnosticsWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"Przeglądarka {APP_VERSION} — niezależne wyszukiwanie")
+        self.setWindowTitle(f"Przeglądarka {APP_VERSION} — własny robot indeksujący")
         self.resize(1180, 760)
         self.setMinimumSize(820, 580)
         self.worker = None
@@ -406,7 +393,7 @@ class MainWindow(QMainWindow):
         title.setFont(QFont("Segoe UI", 22, QFont.Bold))
         title.setStyleSheet("color:#183b56;")
         root.addWidget(title)
-        subtitle = QLabel("Niezależne wyszukiwanie w wielu publicznych źródłach internetu.")
+        subtitle = QLabel("Własny robot indeksujący publiczne strony — bez zewnętrznych wyszukiwarek.")
         subtitle.setStyleSheet("color:#536575;font-size:13px;")
         root.addWidget(subtitle)
 
@@ -436,7 +423,7 @@ class MainWindow(QMainWindow):
         self.query.setClearButtonEnabled(True)
         self.query.returnPressed.connect(self.start_search)
         self.provider = QComboBox()
-        self.provider.addItems(["Wszystkie źródła"] + ENGINE_NAMES)
+        self.provider.addItems(["Indeks własny"])
         self.provider.setMinimumHeight(42)
         self.search_button = QPushButton("Szukaj")
         self.search_button.setMinimumHeight(42)
@@ -448,7 +435,7 @@ class MainWindow(QMainWindow):
         )
         self.search_button.clicked.connect(self.start_search)
         search_row.addWidget(self.query, 1)
-        search_row.addWidget(self.provider)
+        self.provider.hide()
         search_row.addWidget(self.search_button)
         root.addLayout(search_row)
 
@@ -469,7 +456,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self.progress)
 
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Tytuł / źródło", "Opis", "Znalazły wyszukiwarki", "Domena"])
+        self.table.setHorizontalHeaderLabels(["Oferta / strona", "Opis", "Metoda", "Domena"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
@@ -546,12 +533,12 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(tab)
         root.setContentsMargins(12, 12, 12, 12)
         intro = QLabel(
-            "Test sprawdza rzeczywistą odpowiedź każdego źródła na przykładowe zapytanie. "
+            "Test sprawdza rzeczywistą dostępność publicznych stron i działanie lokalnego indeksowania. "
             "Wynik zależy od internetu, regionu, limitów i zabezpieczeń dostawcy."
         )
         intro.setWordWrap(True)
         root.addWidget(intro)
-        self.diag_button = QPushButton("Sprawdź połączenie ze wszystkimi źródłami")
+        self.diag_button = QPushButton("Sprawdź robot i bazę lokalną")
         self.diag_button.clicked.connect(self.run_diagnostics)
         root.addWidget(self.diag_button)
         self.diag_summary = QLabel("Diagnostyka nie została jeszcze uruchomiona.")
@@ -572,7 +559,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self.diag_table, 1)
         hint = QLabel(
             "Uwaga: status „Niedostępna” nie musi oznaczać awarii internetu. "
-            "Wyszukiwarka może blokować automatyczne zapytania lub zmienić stronę."
+            "Robot respektuje robots.txt i nie omija CAPTCHA ani logowania."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color:#687984;")
@@ -587,7 +574,7 @@ class MainWindow(QMainWindow):
         info.setOpenExternalLinks(True)
         info.setHtml("""
         <h2>Jak działa Przeglądarka</h2>
-        <p><b>Wersja:</b> 0.4.0</p>
+        <p><b>Wersja:</b> 0.5.0</p>
         <p>Przeglądarka jest narzędziem do wyszukiwania i porządkowania publicznie
         dostępnych wyników. Nie jest sklepem ani platformą sprzedażową.</p>
         <h3>Połączenia internetowe</h3>
@@ -631,14 +618,13 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Brak zapytania", "Wpisz nazwę produktu, części lub temat.")
             self.query.setFocus()
             return
-        selected = self.provider.currentText()
-        engines = ENGINE_NAMES if selected == "Wszystkie źródła" else [selected]
+        seeds = []
         self.search_button.setEnabled(False)
         self.progress.show()
-        self.status.setText("Przeszukuję wybrane źródła równolegle…")
+        self.status.setText("Robot własny przeszukuje publiczne strony i mapy witryn…")
         self.count.setText("Wyszukiwanie…")
         self.table.setRowCount(0)
-        self.worker = SearchWorker(query, engines)
+        self.worker = SearchWorker(query, seeds=seeds)
         self.worker.results_ready.connect(self.show_results)
         self.worker.start()
 
@@ -650,14 +636,14 @@ class MainWindow(QMainWindow):
             title.setToolTip(result["url"])
             title.setData(Qt.UserRole, result["url"])
             self.table.setItem(row, 0, title)
-            self.table.setItem(row, 1, QTableWidgetItem(result["snippet"]))
-            self.table.setItem(row, 2, QTableWidgetItem(result["engine"]))
+            self.table.setItem(row, 1, QTableWidgetItem(result.get("snippet", "")))
+            self.table.setItem(row, 2, QTableWidgetItem(result.get("source", "Robot własny")))
             self.table.setItem(row, 3, QTableWidgetItem(domain_of(result["url"])))
         self.search_button.setEnabled(True)
         self.progress.hide()
         self.count.setText(f"{len(results)} wyników")
         if errors and not results:
-            self.status.setText("Żadne wybrane źródło nie zwróciło wyników.")
+            self.status.setText("Brak potwierdzonych ofert w sprawdzonych domenach. To nie dowodzi, że produktu nie ma w internecie.")
             QMessageBox.warning(
                 self, "Problem z wyszukiwaniem",
                 "Nie udało się pobrać wyników:\n\n" + "\n".join(errors[:6]) +
@@ -670,7 +656,7 @@ class MainWindow(QMainWindow):
             )
         elif results:
             self.status.setText(
-                "Wyniki połączono i usunięto duplikaty. Program nie promuje sprzedawców."
+                "Wyniki pochodzą z własnego robota i lokalnego indeksu. Bez zewnętrznych wyszukiwarek."
             )
         else:
             self.status.setText("Brak wyników dla tego zapytania.")
@@ -735,7 +721,7 @@ class MainWindow(QMainWindow):
         self.diag_button.setEnabled(True)
         internet_text = "Internet HTTPS: działa" if internet_ok else "Internet HTTPS: brak potwierdzenia"
         self.diag_summary.setText(
-            f"{internet_text}. Wyszukiwarki: {ok} z {len(ENGINE_NAMES)} zwróciło wyniki. "
+            f"{internet_text}. Własny robot korzysta z lokalnego katalogu domen i bazy SQLite. "
             "To test bieżącej dostępności, nie gwarancja przyszłego działania."
         )
 
