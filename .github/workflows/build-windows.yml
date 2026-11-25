@@ -11,6 +11,9 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,11 +42,8 @@ jobs:
           pyinstaller --noconfirm --clean --onefile --windowed --name Przegladarka app/main.py
 
       - name: Sign application EXE (optional Authenticode certificate)
-        if: \${{ secrets.WINDOWS_CERTIFICATE_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
+        if: env.WINDOWS_CERTIFICATE_BASE64 != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
         shell: pwsh
-        env:
-          WINDOWS_CERTIFICATE_BASE64: \${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
-          WINDOWS_CERTIFICATE_PASSWORD: \${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
           $certificatePath = Join-Path $env:RUNNER_TEMP "publisher-certificate.pfx"
           [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
@@ -56,7 +56,7 @@ jobs:
           "Application EXE: Authenticode signed." | Out-File "dist\SIGNATURE_STATUS.txt" -Encoding utf8
 
       - name: Mark application EXE as unsigned when no certificate is configured
-        if: \${{ secrets.WINDOWS_CERTIFICATE_BASE64 == '' || secrets.WINDOWS_CERTIFICATE_PASSWORD == '' }}
+        if: env.WINDOWS_CERTIFICATE_BASE64 == '' || env.WINDOWS_CERTIFICATE_PASSWORD == ''
         shell: pwsh
         run: |
           "Application EXE: unsigned; configure WINDOWS_CERTIFICATE_BASE64 and WINDOWS_CERTIFICATE_PASSWORD repository secrets to sign." |
@@ -71,11 +71,8 @@ jobs:
           "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" installer\Przegladarka.iss
 
       - name: Sign installer (optional Authenticode certificate)
-        if: \${{ secrets.WINDOWS_CERTIFICATE_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
+        if: env.WINDOWS_CERTIFICATE_BASE64 != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
         shell: pwsh
-        env:
-          WINDOWS_CERTIFICATE_BASE64: \${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
-          WINDOWS_CERTIFICATE_PASSWORD: \${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
           $certificatePath = Join-Path $env:RUNNER_TEMP "publisher-certificate.pfx"
           [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
@@ -88,7 +85,7 @@ jobs:
           "Installer: Authenticode signed." | Out-File "dist-installer\SIGNATURE_STATUS.txt" -Encoding utf8
 
       - name: Mark installer as unsigned when no certificate is configured
-        if: \${{ secrets.WINDOWS_CERTIFICATE_BASE64 == '' || secrets.WINDOWS_CERTIFICATE_PASSWORD == '' }}
+        if: env.WINDOWS_CERTIFICATE_BASE64 == '' || env.WINDOWS_CERTIFICATE_PASSWORD == ''
         shell: pwsh
         run: |
           "Installer: unsigned; a trusted publisher certificate is not configured." |
