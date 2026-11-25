@@ -340,6 +340,20 @@ class DiagnosticsWorker(QThread):
 
     def run(self):
         rows = []
+        started = time.monotonic()
+        try:
+            response = requests.get(
+                "https://www.msftconnecttest.com/connecttest.txt",
+                headers=HEADERS, timeout=8
+            )
+            response.raise_for_status()
+            elapsed = time.monotonic() - started
+            rows.append(("Internet (HTTPS)", "Działa", 1, f"{elapsed:.1f} s",
+                         "Połączenie wychodzące HTTPS jest dostępne"))
+        except Exception as exc:
+            elapsed = time.monotonic() - started
+            rows.append(("Internet (HTTPS)", "Brak potwierdzenia", 0, f"{elapsed:.1f} s",
+                         str(exc)[:220]))
         for name in ENGINE_NAMES:
             started = time.monotonic()
             try:
@@ -611,14 +625,18 @@ class MainWindow(QMainWindow):
     def show_diagnostics(self, rows):
         self.diag_table.setRowCount(len(rows))
         ok = 0
+        internet_ok = False
         for row, data in enumerate(rows):
             for col, value in enumerate(data):
                 self.diag_table.setItem(row, col, QTableWidgetItem(str(value)))
-            if data[1] == "Działa":
+            if data[0] == "Internet (HTTPS)":
+                internet_ok = data[1] == "Działa"
+            elif data[1] == "Działa":
                 ok += 1
         self.diag_button.setEnabled(True)
+        internet_text = "Internet HTTPS: działa" if internet_ok else "Internet HTTPS: brak potwierdzenia"
         self.diag_summary.setText(
-            f"Test zakończony: {ok} z {len(rows)} źródeł zwróciło wyniki. "
+            f"{internet_text}. Wyszukiwarki: {ok} z {len(ENGINE_NAMES)} zwróciło wyniki. "
             "To test bieżącej dostępności, nie gwarancja przyszłego działania."
         )
 
