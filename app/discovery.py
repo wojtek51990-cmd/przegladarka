@@ -211,7 +211,7 @@ class SourceDB:
         with self.connect() as db:
             return [
                 dict(row) for row in db.execute(
-                    "SELECT * FROM sources WHERE source_type != 'strona / inne' "
+                    "SELECT * FROM sources WHERE source_type IN ('hurtownia / dystrybutor', 'producent', 'ogłoszenia / marketplace', 'katalog', 'sklep') "
                     "ORDER BY last_seen DESC LIMIT ?", (limit,)
                 )
             ]
