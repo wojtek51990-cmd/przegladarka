@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "description": "Bootstrap domains for independent public-web crawling; not an endorsement or complete index.",
+  "seeds": [
+    "https://www.tme.eu/",
+    "https://www.botland.com.pl/",
+    "https://kamami.pl/",
+    "https://www.elhurt.com.pl/",
+    "https://www.north.pl/",
+    "https://www.tim.pl/",
+    "https://www.conrad.pl/",
+    "https://pl.rs-online.com/",
+    "https://www.farnell.com/",
+    "https://www.mouser.com/",
+    "https://www.digikey.com/",
+    "https://www.reichelt.com/",
+    "https://www.onninen.pl/",
+    "https://www.castorama.pl/",
+    "https://www.leroymerlin.pl/",
+    "https://www.bricoman.pl/",
+    "https://www.sklep.avt.pl/",
+    "https://www.nettigo.pl/",
+    "https://www.24volt.eu/",
+    "https://www.europages.com/",
+    "https://panoramafirm.pl/",
+    "https://www.pkt.pl/",
+    "https://www.biznesfinder.pl/"
+  ]
+}
