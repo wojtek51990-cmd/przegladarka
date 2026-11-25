@@ -2,7 +2,7 @@ name: Build Windows installer
 
 on:
   push:
-    branches: [ main, stage-1-v0.2.0, stage-2-v0.3.0, stage-3-v0.3.1, stage-4-v0.4.0 ]
+    branches: [ main, stage-1-v0.2.0, stage-2-v0.3.0, stage-3-v0.3.1, stage-5-v0.5.0 ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -38,7 +38,7 @@ jobs:
       - name: Check live search providers (informational)
         continue-on-error: true
         run: |
-          python tests/live_smoke.py
+          python tests/discovery_live_smoke.py
 
       - name: Live public-web discovery smoke test (informational)
         continue-on-error: true
@@ -47,7 +47,7 @@ jobs:
 
       - name: Build standalone EXE
         run: |
-          pyinstaller --noconfirm --clean --onefile --windowed --name Przegladarka app/main.py
+          pyinstaller --noconfirm --clean --onefile --windowed --add-data "app/seed_catalog.json;app" --name Przegladarka app/main.py
 
       - name: Sign application EXE (optional Authenticode certificate)
         if: env.WINDOWS_CERTIFICATE_BASE64 != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
@@ -88,7 +88,7 @@ jobs:
             Where-Object { $_.FullName -match '\\x64\\signtool.exe$' } |
             Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $signTool) { throw "Windows SDK signtool.exe was not found." }
-          & $signTool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $certificatePath /p $env:WINDOWS_CERTIFICATE_PASSWORD "dist-installer\Przegladarka-Setup-Windows-v0.4.0.exe"
+          & $signTool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $certificatePath /p $env:WINDOWS_CERTIFICATE_PASSWORD "dist-installer\Przegladarka-Setup-Windows-v0.5.0.exe"
           if ($LASTEXITCODE -ne 0) { throw "Signing installer failed." }
           "Installer: Authenticode signed." | Out-File "dist-installer\SIGNATURE_STATUS.txt" -Encoding utf8
 
