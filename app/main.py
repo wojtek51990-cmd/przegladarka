@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Przeglądarka"
+APP_VERSION = "0.1.1"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -162,7 +163,7 @@ class SearchWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Przeglądarka — niezależne wyszukiwanie")
+        self.setWindowTitle(f"Przeglądarka {APP_VERSION} — niezależne wyszukiwanie")
         self.resize(1120, 720)
         self.setMinimumSize(780, 520)
         self.worker = None
