@@ -342,12 +342,12 @@ class SearchWorker(QThread):
 
 class DiscoveryWorker(QThread):
     finished_data = Signal(dict)
-    def __init__(self, query, deep):
+    def __init__(self, query, deep, seeds=None):
         super().__init__()
-        self.query, self.deep = query, deep
+        self.query, self.deep, self.seeds = query, deep, seeds or []
     def run(self):
         try:
-            data = discover(self.query, deep=self.deep)
+            data = discover(self.query, deep=self.deep, extra_seeds=self.seeds)
         except Exception as exc:
             data = {"results": [], "sources": [], "pages_checked": 0, "seed_count": 0, "errors": [f"Błąd modułu odkrywania: {exc}"]}
         self.finished_data.emit(data)
@@ -517,7 +517,14 @@ class MainWindow(QMainWindow):
         row.addWidget(self.discovery_depth)
         row.addWidget(self.discovery_button)
         root.addLayout(row)
-        self.discovery_status = QLabel("Baza źródeł jest przechowywana lokalnie na tym komputerze.")
+        seed_row = QHBoxLayout()
+        seed_label = QLabel("Dodatkowe adresy startowe:")
+        self.discovery_seeds = QLineEdit()
+        self.discovery_seeds.setPlaceholderText("Opcjonalnie: https://hurtownia.pl/; https://producent.eu/")
+        seed_row.addWidget(seed_label)
+        seed_row.addWidget(self.discovery_seeds, 1)
+        root.addLayout(seed_row)
+        self.discovery_status = QLabel("Baza źródeł jest przechowywana lokalnie na tym komputerze. Możesz rozpocząć skanowanie również bez wyszukiwarki, podając własne adresy startowe.")
         root.addWidget(self.discovery_status)
         self.discovery_table = QTableWidget(0, 5)
         self.discovery_table.setHorizontalHeaderLabels(["Produkt / strona", "Cena", "Domena", "Opis", "Adres"])
@@ -678,7 +685,8 @@ class MainWindow(QMainWindow):
         self.discovery_button.setEnabled(False)
         self.discovery_status.setText("Odkrywam publiczne strony, sprawdzam mapy witryn i zapisuję źródła…")
         self.discovery_table.setRowCount(0)
-        self.discovery_worker = DiscoveryWorker(query, self.discovery_depth.currentIndex() == 1)
+        seeds = [x.strip() for x in re.split(r'[;\n,]+', self.discovery_seeds.text()) if x.strip()]
+        self.discovery_worker = DiscoveryWorker(query, self.discovery_depth.currentIndex() == 1, seeds)
         self.discovery_worker.finished_data.connect(self.show_discovery_results)
         self.discovery_worker.start()
 
