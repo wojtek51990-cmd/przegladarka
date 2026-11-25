@@ -154,7 +154,7 @@ class MainWindow(QMainWindow):
 
         search_row = QHBoxLayout()
         self.query = QLineEdit()
-        self.query.setPlaceholderText("Wpisz, czego szukasz, np. sprężarka Embraco EMT  н...")
+        self.query.setPlaceholderText("Wpisz, czego szukasz, np. sprężarka Embraco EMT")
         self.query.setMinimumHeight(42)
         self.query.setClearButtonEnabled(True)
         self.query.returnPressed.connect(self.start_search)
