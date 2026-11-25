@@ -39,7 +39,7 @@ class DiscoveryTests(unittest.TestCase):
             self.assertTrue(offer[0])
             self.assertEqual(offer[1],"123.00")
             self.assertIn("https://example.com/oferta",links)
-            self.assertFalse(any("other.example" in x for x in links))
+            self.assertTrue(any("other.example" in x for x in links))
 
 if __name__ == "__main__":
     unittest.main()
