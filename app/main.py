@@ -337,6 +337,18 @@ class SearchWorker(QThread):
         self.results_ready.emit(merge_results(results), errors)
 
 
+class DiscoveryWorker(QThread):
+    finished_data = Signal(dict)
+    def __init__(self, query, deep):
+        super().__init__()
+        self.query, self.deep = query, deep
+    def run(self):
+        try:
+            data = discover(self.query, deep=self.deep)
+        except Exception as exc:
+            data = {"results": [], "sources": [], "pages_checked": 0, "seed_count": 0, "errors": [f"Błąd modułu odkrywania: {exc}"]}
+        self.finished_data.emit(data)
+
 class DiagnosticsWorker(QThread):
     diagnostics_ready = Signal(list)
 
@@ -376,6 +388,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(820, 580)
         self.worker = None
         self.diagnostics_worker = None
+        self.discovery_worker = None
         self.all_results = []
         self._build_ui()
 
@@ -564,7 +577,7 @@ class MainWindow(QMainWindow):
         info.setOpenExternalLinks(True)
         info.setHtml("""
         <h2>Jak działa Przeglądarka</h2>
-        <p><b>Wersja:</b> 0.2.0</p>
+        <p><b>Wersja:</b> 0.3.0</p>
         <p>Przeglądarka jest narzędziem do wyszukiwania i porządkowania publicznie
         dostępnych wyników. Nie jest sklepem ani platformą sprzedażową.</p>
         <h3>Połączenia internetowe</h3>
@@ -577,7 +590,7 @@ class MainWindow(QMainWindow):
           mogą przetwarzać je zgodnie z własnymi zasadami prywatności.</li>
           <li>Otwieranie znalezionych stron odbywa się w domyślnej przeglądarce Windows.</li>
         </ul>
-        <h3>Wyniki i ranking</h3>
+        <h3>Niezależne odkrywanie stron</h3><ul><li>Wyszukiwarki są tylko jednym ze sposobów znalezienia pierwszych adresów startowych.</li><li>Następnie program sam analizuje publiczne podstrony, linki i mapy witryn oraz zapisuje domeny i oferty w lokalnej bazie SQLite.</li><li>Przy kolejnych zapytaniach może ponownie wykorzystać wcześniej odkryte domeny.</li><li>Wykrycie ceny lub słów handlowych nie potwierdza dostępności ani wiarygodności sprzedawcy.</li></ul><h3>Wyniki i ranking</h3>
         <ul>
           <li>Program nie sprzedaje miejsc w wynikach i nie pobiera opłat od sprzedawców.</li>
           <li>Wyniki są zbierane z wybranych źródeł i łączone po adresie strony.</li>
@@ -651,6 +664,41 @@ class MainWindow(QMainWindow):
             )
         else:
             self.status.setText("Brak wyników dla tego zapytania.")
+
+    def run_discovery(self):
+        query = self.discovery_query.text().strip()
+        if not query:
+            QMessageBox.information(self, "Brak zapytania", "Wpisz nazwę produktu lub części.")
+            self.discovery_query.setFocus()
+            return
+        if self.discovery_worker and self.discovery_worker.isRunning(): return
+        self.discovery_button.setEnabled(False)
+        self.discovery_status.setText("Odkrywam publiczne strony, sprawdzam mapy witryn i zapisuję źródła…")
+        self.discovery_table.setRowCount(0)
+        self.discovery_worker = DiscoveryWorker(query, self.discovery_depth.currentIndex() == 1)
+        self.discovery_worker.finished_data.connect(self.show_discovery_results)
+        self.discovery_worker.start()
+
+    def show_discovery_results(self, data):
+        rows = data.get("results", [])
+        self.discovery_table.setRowCount(len(rows))
+        for row, item in enumerate(rows):
+            title = QTableWidgetItem(item.get("title", ""))
+            title.setData(Qt.UserRole, item.get("url", ""))
+            self.discovery_table.setItem(row, 0, title)
+            price = " ".join(x for x in (item.get("price", ""), item.get("currency", "")) if x)
+            self.discovery_table.setItem(row, 1, QTableWidgetItem(price or "Nie wykryto"))
+            self.discovery_table.setItem(row, 2, QTableWidgetItem(item.get("domain", "")))
+            self.discovery_table.setItem(row, 3, QTableWidgetItem(item.get("snippet", "")))
+            self.discovery_table.setItem(row, 4, QTableWidgetItem(item.get("url", "")))
+        self.discovery_button.setEnabled(True)
+        self.discovery_status.setText(f"Sprawdzone strony: {data.get('pages_checked', 0)} | znane domeny: {len(data.get('sources', []))} | adresy startowe: {data.get('seed_count', 0)} | wykryte oferty: {len(rows)}")
+        errors = data.get("errors", [])
+        self.discovery_summary.setText(("Uwagi: " + "; ".join(errors[:5])) if errors else "Skanowanie zakończone. Wyniki i źródła zapisano w lokalnej bazie.")
+
+    def open_discovery_result(self, row, column):
+        item = self.discovery_table.item(row, 0)
+        if item and item.data(Qt.UserRole): webbrowser.open(item.data(Qt.UserRole))
 
     def run_diagnostics(self):
         if self.diagnostics_worker and self.diagnostics_worker.isRunning():
