@@ -587,7 +587,7 @@ class MainWindow(QMainWindow):
         info.setOpenExternalLinks(True)
         info.setHtml("""
         <h2>Jak działa Przeglądarka</h2>
-        <p><b>Wersja:</b> 0.3.1</p>
+        <p><b>Wersja:</b> 0.4.0</p>
         <p>Przeglądarka jest narzędziem do wyszukiwania i porządkowania publicznie
         dostępnych wyników. Nie jest sklepem ani platformą sprzedażową.</p>
         <h3>Połączenia internetowe</h3>
