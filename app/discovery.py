@@ -42,6 +42,20 @@ def normalize_url(url: str) -> str:
         return ""
     return url
 
+def classify_source(title: str, text: str) -> str:
+    hay = (title + " " + text).lower()
+    if any(x in hay for x in ("hurtownia", "wholesale", "dystrybutor")):
+        return "hurtownia / dystrybutor"
+    if any(x in hay for x in ("producent", "manufacturer", "factory")):
+        return "producent"
+    if any(x in hay for x in ("ogłoszenia", "ogloszenia", "classified", "aukcje")):
+        return "ogłoszenia / marketplace"
+    if any(x in hay for x in ("katalog produktów", "katalog produktow", "catalog")):
+        return "katalog"
+    if any(x in hay for x in ("sklep", "koszyk", "dodaj do koszyka", "shopping cart")):
+        return "sklep"
+    return "strona / inne"
+
 def expand_queries(query: str) -> list[str]:
     q = " ".join(query.split())
     if not q:
@@ -241,7 +255,9 @@ class PoliteCrawler:
             if target and domain_of(target) == domain_of(url):
                 if not any(x in urlparse(target).path.lower() for x in ("/login","/konto","/cart","/koszyk","/checkout","/polityka","/privacy")):
                     links.append(target)
-        return title, snippet, (offer, price, currency), list(dict.fromkeys(links))[:100]
+        unique_links = list(dict.fromkeys(links))
+        unique_links.sort(key=lambda link: domain_of(link) != domain_of(url))
+        return title, snippet, (offer, price, currency), unique_links[:100]
     def crawl(self, query, seed_urls, deep=False):
         max_pages = self.max_pages * (2 if deep else 1)
         per_domain = self.pages_per_domain * (2 if deep else 1)
@@ -279,6 +295,7 @@ class PoliteCrawler:
             domain_counts[domain] = domain_counts.get(domain,0)+1
             title, snippet, offer_data, links = self.extract(final_url, html, query)
             self.pages_checked += 1
+            self.db.save_source(domain, classify_source(title, snippet))
             self.db.save_page(final_url, domain, title, snippet)
             is_offer, price, currency = offer_data
             if is_offer:
