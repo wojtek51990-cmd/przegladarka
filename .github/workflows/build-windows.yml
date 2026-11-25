@@ -35,8 +35,7 @@ jobs:
         run: |
           python tests/provider_probe.py
 
-      - name: Live search smoke test (external services may block automation)
-        continue-on-error: true
+      - name: Required live search smoke test
         run: |
           python tests/live_smoke.py
 
@@ -55,7 +54,7 @@ jobs:
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: Przegladarka-Setup-Windows-v0.1.1
-          path: dist-installer/Przegladarka-Setup-Windows-v0.1.1.exe
+          name: Przegladarka-Setup-Windows-v0.1.2
+          path: dist-installer/Przegladarka-Setup-Windows-v0.1.2.exe
           if-no-files-found: error
           retention-days: 30
