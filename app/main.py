@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Przeglądarka"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.3.1"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -587,7 +587,7 @@ class MainWindow(QMainWindow):
         info.setOpenExternalLinks(True)
         info.setHtml("""
         <h2>Jak działa Przeglądarka</h2>
-        <p><b>Wersja:</b> 0.3.0</p>
+        <p><b>Wersja:</b> 0.3.1</p>
         <p>Przeglądarka jest narzędziem do wyszukiwania i porządkowania publicznie
         dostępnych wyników. Nie jest sklepem ani platformą sprzedażową.</p>
         <h3>Połączenia internetowe</h3>
