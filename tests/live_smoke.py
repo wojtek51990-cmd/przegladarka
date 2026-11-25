@@ -22,15 +22,17 @@ def main():
     ):
         try:
             results = search(QUERY)
-            print(f"{name}: OK — {len(results)} wyników dla zapytania testowego.")
+            print(f"{name}: OK - {len(results)} results for the test query.")
             successful += 1
         except Exception as exc:
-            print(f"{name}: niedostępna w teście sieciowym — {exc}")
+            # ascii() prevents legacy Windows console encodings from hiding
+            # the real network/parser error behind a UnicodeEncodeError.
+            print(f"{name}: unavailable - {ascii(str(exc))}")
 
     if successful == 0:
         raise SystemExit(
-            "Żadna wyszukiwarka nie zwróciła wyników. "
-            "Możliwa blokada ruchu automatycznego z runnera GitHub."
+            "Neither search provider returned results. "
+            "The hosted runner may be blocked by the providers."
         )
 
 
