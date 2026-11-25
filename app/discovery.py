@@ -23,7 +23,7 @@ USER_AGENT = "PrzegladarkaOfferDiscovery/0.3 (+public-web; respectful crawler)"
 HEADERS = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Language": "pl-PL,pl;q=0.9,en;q=0.7"}
 TIMEOUT = 12
 MAX_BYTES = 2_000_000
-PRICE_RE = re.compile(r"(?<!\\w)(\\d{1,3}(?:[ .]\\d{3})*(?:,\\d{2})?|\\d+(?:[,.]\\d{2})?)\\s?(zł|PLN|EUR|€|USD|\\$)", re.I)
+PRICE_RE = re.compile(r"(?<!\w)(\d{1,3}(?:[ .]\d{3})*(?:,\d{2})?|\d+(?:[,.]\d{2})?)\s?(zł|PLN|EUR|€|USD|\$)", re.I)
 OFFER_WORDS = ("cena", "zł", "pln", "eur", "produkt", "oferta", "sklep", "hurtownia", "producent", "dostępny", "dostepny", "koszyk", "brutto")
 
 def domain_of(url: str) -> str:
@@ -89,7 +89,7 @@ class SourceDB:
         with self.connect() as db:
             return [dict(r) for r in db.execute("SELECT * FROM sources ORDER BY last_seen DESC LIMIT ?", (limit,))]
     def offers_for_query(self, query, limit=100):
-        tokens = [t.lower() for t in re.findall(r"[\\w-]{3,}", query)]
+        tokens = [t.lower() for t in re.findall(r"[\w-]{3,}", query)]
         with self.connect() as db:
             rows = [dict(r) for r in db.execute("SELECT * FROM offers ORDER BY found_at DESC LIMIT 500")]
         if not tokens:
@@ -198,7 +198,7 @@ class PoliteCrawler:
         for tag in soup(["script","style","noscript","svg"]):
             tag.decompose()
         title = (soup.title.get_text(" ",strip=True) if soup.title else "")[:300]
-        text = re.sub(r"\\s+", " ", soup.get_text(" ",strip=True))
+        text = re.sub(r"\s+", " ", soup.get_text(" ",strip=True))
         snippet = text[:700]
         price_match = PRICE_RE.search(text)
         currency = price_match.group(2).upper() if price_match else ""
