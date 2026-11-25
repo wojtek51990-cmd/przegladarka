@@ -32,7 +32,7 @@ HEADERS = {
 TIMEOUT = 12
 MAX_BYTES = 2_000_000
 PRICE_RE = re.compile(
-    r"(?<!\\w)(\\d{1,3}(?:[ .]\\d{3})*(?:,\\d{2})?|\\d+(?:[,.]\\d{2})?)\\s?(zł|PLN|EUR|€|USD|\\$)",
+    r"(?<!\w)(\d{1,3}(?:[ .]\d{3})*(?:,\d{2})?|\d+(?:[,.]\d{2})?)\s?(zł|PLN|EUR|€|USD|\$)",
     re.I,
 )
 STOP_WORDS = {
@@ -89,7 +89,7 @@ def normalize_url(url: str) -> str:
 
 def _normal_text(value: str) -> str:
     value = (value or "").lower().replace("ł", "l")
-    value = re.sub(r"[^\\w]+", " ", value, flags=re.UNICODE)
+    value = re.sub(r"[^\w]+", " ", value, flags=re.UNICODE)
     return " ".join(value.split())
 
 
@@ -348,7 +348,7 @@ class PoliteCrawler:
         for tag in soup(["script", "style", "noscript", "svg"]):
             tag.decompose()
         title = (soup.title.get_text(" ", strip=True) if soup.title else "")[:300]
-        text = re.sub(r"\\s+", " ", soup.get_text(" ", strip=True))
+        text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
         snippet = text[:12000]
         product_names = []
         json_product = False
