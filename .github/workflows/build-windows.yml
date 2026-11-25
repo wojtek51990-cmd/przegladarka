@@ -35,11 +35,6 @@ jobs:
         run: |
           python -m unittest discover -s tests -p "test_*.py" -v
 
-      - name: Check live search providers (informational)
-        continue-on-error: true
-        run: |
-          python tests/discovery_live_smoke.py
-
       - name: Live public-web discovery smoke test (informational)
         continue-on-error: true
         run: |
@@ -102,9 +97,9 @@ jobs:
       - name: Upload installer and signature status
         uses: actions/upload-artifact@v4
         with:
-          name: Przegladarka-Setup-Windows-v0.4.0
+          name: Przegladarka-Setup-Windows-v0.5.0
           path: |
-            dist-installer/Przegladarka-Setup-Windows-v0.4.0.exe
+            dist-installer/Przegladarka-Setup-Windows-v0.5.0.exe
             dist-installer/SIGNATURE_STATUS.txt
           if-no-files-found: error
           retention-days: 30
