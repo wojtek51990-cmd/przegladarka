@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from app.main import clean_url, search_bing, search_duckduckgo
+from app.main import clean_url, parse_bing_rss, search_bing, search_duckduckgo
 
 
 class FakeResponse:
@@ -60,6 +60,30 @@ class SearchParserTests(unittest.TestCase):
         self.assertEqual(results[0]["title"], "Hurtownia części")
         self.assertEqual(results[0]["url"], "https://hurtownia.example/czesci")
         self.assertEqual(mocked_get.call_count, 2)
+
+
+    def test_bing_rss_feed_is_parsed(self):
+        feed = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0"><channel><item>
+          <title>Sprężarka Embraco EMT</title>
+          <link>https://sklep.example/embraco-emt</link>
+          <description>Sprężarka do chłodnictwa</description>
+        </item></channel></rss>"""
+        results = parse_bing_rss(feed)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["title"], "Sprężarka Embraco EMT")
+        self.assertEqual(results[0]["url"], "https://sklep.example/embraco-emt")
+        self.assertEqual(results[0]["engine"], "Bing")
+
+    def test_bing_tracking_link_is_decoded(self):
+        import base64
+        from urllib.parse import quote
+        target = "https://sklep.example/czesci"
+        encoded = "a1" + base64.urlsafe_b64encode(target.encode()).decode().rstrip("=")
+        self.assertEqual(
+            clean_url("https://www.bing.com/ck/a?u=" + quote(encoded)),
+            target
+        )
 
     @patch("app.main.requests.get")
     def test_bing_results_are_parsed(self, mocked_get):
