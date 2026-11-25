@@ -349,7 +349,7 @@ class PoliteCrawler:
             tag.decompose()
         title = (soup.title.get_text(" ", strip=True) if soup.title else "")[:300]
         text = re.sub(r"\\s+", " ", soup.get_text(" ", strip=True))
-        snippet = text[:900]
+        snippet = text[:12000]
         product_names = []
         json_product = False
         structured_price = ""
