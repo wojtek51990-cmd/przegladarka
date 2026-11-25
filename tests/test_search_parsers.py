@@ -63,12 +63,12 @@ class SearchParserTests(unittest.TestCase):
 
 
     def test_bing_rss_feed_is_parsed(self):
-        feed = b"""<?xml version="1.0" encoding="UTF-8"?>
+        feed = """<?xml version="1.0" encoding="UTF-8"?>
         <rss version="2.0"><channel><item>
           <title>Sprężarka Embraco EMT</title>
           <link>https://sklep.example/embraco-emt</link>
           <description>Sprężarka do chłodnictwa</description>
-        </item></channel></rss>"""
+        </item></channel></rss>""".encode("utf-8")
         results = parse_bing_rss(feed)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["title"], "Sprężarka Embraco EMT")
