@@ -8,6 +8,8 @@ from app.discovery import discover
 QUERY = "Raspberry Pi 5"
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     with tempfile.TemporaryDirectory() as tmp:
         data = discover(QUERY, deep=False, db_path=Path(tmp) / "live.sqlite3")
     print("External search engines used: no")
