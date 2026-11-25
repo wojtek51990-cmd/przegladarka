@@ -26,7 +26,7 @@ APP_VERSION = "0.5.0"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/rss+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "text/html,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "pl-PL,pl;q=0.9,en;q=0.8",
 }
 TIMEOUT = 14
@@ -357,13 +357,13 @@ class MainWindow(QMainWindow):
             self.table.setItem(row, 3, QTableWidgetItem(domain_of(result["url"])))
         self.search_button.setEnabled(True)
         self.progress.hide()
-        self.count.setText(f"{len(results)} wyników")
+        self.count.setText(f"{len(results)} ofert")
         if errors and not results:
             self.status.setText("Brak potwierdzonych ofert w sprawdzonych domenach. To nie dowodzi, że produktu nie ma w internecie.")
             QMessageBox.warning(
                 self, "Problem z wyszukiwaniem",
                 "Nie udało się pobrać wyników:\n\n" + "\n".join(errors[:6]) +
-                "\n\nOtwórz zakładkę Diagnostyka połączenia, aby sprawdzić źródła."
+                "\n\nDodaj adresy sklepów w zakładce Odkrywanie ofert, aby rozszerzyć indeks."
             )
         elif errors:
             self.status.setText(
