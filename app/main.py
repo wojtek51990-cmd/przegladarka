@@ -1,5 +1,7 @@
 import sys
 import re
+import base64
+import xml.etree.ElementTree as ET
 import concurrent.futures
 from datetime import datetime
 from urllib.parse import quote_plus, urlparse, parse_qs, unquote
@@ -17,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Przeglądarka"
-APP_VERSION = "0.1.1"
+APP_VERSION = "0.1.2"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -31,6 +33,17 @@ def clean_url(url):
     url = unquote(url.strip())
     if url.startswith("//"):
         url = "https:" + url
+    if "bing.com/ck/a" in url:
+        try:
+            encoded = parse_qs(urlparse(url).query).get("u", [""])[0]
+            if encoded.startswith("a1"):
+                payload = encoded[2:]
+                payload += "=" * (-len(payload) % 4)
+                decoded = base64.urlsafe_b64decode(payload).decode("utf-8", "ignore")
+                if decoded.startswith(("http://", "https://")):
+                    url = decoded
+        except Exception:
+            pass
     if "duckduckgo.com/l/?" in url:
         try:
             url = parse_qs(urlparse(url).query).get("uddg", [url])[0]
@@ -96,36 +109,77 @@ def search_duckduckgo(query):
             last_error = exc
     raise RuntimeError(str(last_error or "Nie udało się odczytać wyników DuckDuckGo."))
 
+def parse_bing_rss(xml_content):
+    """Read Bing's RSS search feed; unlike its HTML, this has stable item fields."""
+    try:
+        root = ET.fromstring(xml_content)
+    except ET.ParseError:
+        return []
+    found = []
+    for item in root.findall(".//item"):
+        title_node = item.find("title")
+        link_node = item.find("link")
+        desc_node = item.find("description")
+        title = title_node.text.strip() if title_node is not None and title_node.text else ""
+        target = clean_url(link_node.text.strip()) if link_node is not None and link_node.text else ""
+        if not title or not target:
+            continue
+        description = ""
+        if desc_node is not None and desc_node.text:
+            description = BeautifulSoup(desc_node.text, "html.parser").get_text(" ", strip=True)
+        found.append({
+            "title": title,
+            "url": target,
+            "snippet": description[:500],
+            "engine": "Bing",
+        })
+    return found
+
+
 def search_bing(query):
+    # Stabilny kanał RSS Bing jest odporniejszy na zmiany układu strony HTML.
+    rss_url = "https://www.bing.com/search?format=rss&q=" + quote_plus(query)
+    rss_error = None
+    try:
+        response = requests.get(rss_url, headers=HEADERS, timeout=TIMEOUT)
+        response.raise_for_status()
+        rss_results = parse_bing_rss(response.content)
+        if rss_results:
+            return rss_results
+    except Exception as exc:
+        rss_error = exc
+
+    # Awaryjny odczyt strony HTML: starsze i nowsze układy Bing.
     url = "https://www.bing.com/search?q=" + quote_plus(query)
     response = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
     response.raise_for_status()
     soup = BeautifulSoup(response.text, "html.parser")
-    found = []
-    # Główny selektor Bing oraz awaryjny odczyt nagłówków wyników.
+    found, seen = [], set()
     links = []
-    for item in soup.select("li.b_algo"):
-        link = item.select_one("h2 a")
-        if link:
-            links.append((link, item))
+    for selector in ("li.b_algo h2 a[href]", "#b_results h2 a[href]",
+                     "#b_results h3 a[href]", "main h2 a[href]", "main h3 a[href]"):
+        links.extend(soup.select(selector))
     if not links:
-        for link in soup.select("h2 a[href]"):
-            links.append((link, link.parent))
-    seen = set()
-    for link, container in links:
+        links = soup.select("h2 a[href], h3 a[href]")
+    for link in links:
         target = clean_url(link.get("href", ""))
         if not target or "bing.com" in domain_of(target) or target in seen:
             continue
         seen.add(target)
+        container = link.find_parent("li") or link.parent
         snippet_node = container.select_one("p") if container else None
-        found.append({"title": link.get_text(" ", strip=True), "url": target,
-                      "snippet": snippet_node.get_text(" ", strip=True) if snippet_node else "",
-                      "engine": "Bing"})
+        found.append({
+            "title": link.get_text(" ", strip=True),
+            "url": target,
+            "snippet": snippet_node.get_text(" ", strip=True) if snippet_node else "",
+            "engine": "Bing",
+        })
     if not found:
         page_text = soup.get_text(" ", strip=True).lower()
         if any(word in page_text for word in ("captcha", "unusual traffic", "automated requests", "verify you are")):
             raise RuntimeError("Bing wyświetlił zabezpieczenie antybotowe.")
-        raise RuntimeError("Bing odpowiedział, ale nie udało się odczytać wyników z jego strony.")
+        detail = f" (RSS: {rss_error})" if rss_error else ""
+        raise RuntimeError("Bing odpowiedział, ale nie udało się odczytać wyników." + detail)
     return found
 
 class SearchWorker(QThread):
