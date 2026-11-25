@@ -6,6 +6,7 @@ in, never bypasses CAPTCHAs, and only follows ordinary public HTTP(S) pages.
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 import re
 import sqlite3
 import time
@@ -71,10 +72,18 @@ class SourceDB:
               currency TEXT, snippet TEXT, query TEXT, found_at TEXT DEFAULT CURRENT_TIMESTAMP);
             CREATE INDEX IF NOT EXISTS idx_offers_domain ON offers(domain);
             """)
+    @contextmanager
     def connect(self):
         db = sqlite3.connect(self.path, timeout=20)
         db.row_factory = sqlite3.Row
-        return db
+        try:
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
     def save_source(self, domain, kind="strona"):
         with self.connect() as db:
             db.execute("INSERT INTO sources(domain,source_type) VALUES(?,?) ON CONFLICT(domain) DO UPDATE SET last_seen=CURRENT_TIMESTAMP", (domain,kind))
