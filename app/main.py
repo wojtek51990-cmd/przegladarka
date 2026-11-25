@@ -49,27 +49,51 @@ def domain_of(url):
 
 
 def search_duckduckgo(query):
-    url = "https://html.duckduckgo.com/html/?q=" + quote_plus(query)
-    response = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, "html.parser")
-    found = []
-    for item in soup.select(".result"):
-        link = item.select_one("a.result__a")
-        if not link:
-            continue
-        target = clean_url(link.get("href", ""))
-        if not target or "duckduckgo.com" in domain_of(target):
-            continue
-        snippet = item.select_one(".result__snippet")
-        found.append({
-            "title": link.get_text(" ", strip=True),
-            "url": target,
-            "snippet": snippet.get_text(" ", strip=True) if snippet else "",
-            "engine": "DuckDuckGo"
-        })
-    return found
-
+    # Najpierw lekka wersja HTML, która zwykle jest prostsza do odczytania.
+    endpoints = [
+        ("https://lite.duckduckgo.com/lite/?q=", "lite"),
+        ("https://html.duckduckgo.com/html/?q=", "html"),
+    ]
+    last_error = None
+    for base, mode in endpoints:
+        try:
+            response = requests.get(base + quote_plus(query), headers=HEADERS, timeout=TIMEOUT)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+            found = []
+            if mode == "lite":
+                links = soup.select("a.result-link, a.result__a")
+                for link in links:
+                    target = clean_url(link.get("href", ""))
+                    if not target or "duckduckgo.com" in domain_of(target):
+                        continue
+                    row = link.find_parent("tr") or link.parent
+                    snippet = row.get_text(" ", strip=True) if row else ""
+                    found.append({"title": link.get_text(" ", strip=True), "url": target,
+                                  "snippet": snippet[:500], "engine": "DuckDuckGo"})
+            else:
+                for item in soup.select(".result"):
+                    link = item.select_one("a.result__a")
+                    if not link:
+                        continue
+                    target = clean_url(link.get("href", ""))
+                    if not target or "duckduckgo.com" in domain_of(target):
+                        continue
+                    snippet = item.select_one(".result__snippet")
+                    found.append({"title": link.get_text(" ", strip=True), "url": target,
+                                  "snippet": snippet.get_text(" ", strip=True) if snippet else "",
+                                  "engine": "DuckDuckGo"})
+            if found:
+                return found
+            # Strona bez wyników może być stroną blokady, a nie prawdziwym pustym wynikiem.
+            page_text = soup.get_text(" ", strip=True).lower()
+            if any(word in page_text for word in ("captcha", "unusual traffic", "automated requests", "robot")):
+                last_error = RuntimeError("DuckDuckGo wyświetlił zabezpieczenie antybotowe.")
+            else:
+                last_error = RuntimeError("DuckDuckGo odpowiedział, ale zmienił układ strony wyników.")
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(str(last_error or "Nie udało się odczytać wyników DuckDuckGo."))
 
 def search_bing(query):
     url = "https://www.bing.com/search?q=" + quote_plus(query)
@@ -77,22 +101,31 @@ def search_bing(query):
     response.raise_for_status()
     soup = BeautifulSoup(response.text, "html.parser")
     found = []
+    # Główny selektor Bing oraz awaryjny odczyt nagłówków wyników.
+    links = []
     for item in soup.select("li.b_algo"):
         link = item.select_one("h2 a")
-        if not link:
-            continue
+        if link:
+            links.append((link, item))
+    if not links:
+        for link in soup.select("h2 a[href]"):
+            links.append((link, link.parent))
+    seen = set()
+    for link, container in links:
         target = clean_url(link.get("href", ""))
-        if not target or "bing.com" in domain_of(target):
+        if not target or "bing.com" in domain_of(target) or target in seen:
             continue
-        snippet = item.select_one("p")
-        found.append({
-            "title": link.get_text(" ", strip=True),
-            "url": target,
-            "snippet": snippet.get_text(" ", strip=True) if snippet else "",
-            "engine": "Bing"
-        })
+        seen.add(target)
+        snippet_node = container.select_one("p") if container else None
+        found.append({"title": link.get_text(" ", strip=True), "url": target,
+                      "snippet": snippet_node.get_text(" ", strip=True) if snippet_node else "",
+                      "engine": "Bing"})
+    if not found:
+        page_text = soup.get_text(" ", strip=True).lower()
+        if any(word in page_text for word in ("captcha", "unusual traffic", "automated requests", "verify you are")):
+            raise RuntimeError("Bing wyświetlił zabezpieczenie antybotowe.")
+        raise RuntimeError("Bing odpowiedział, ale nie udało się odczytać wyników z jego strony.")
     return found
-
 
 class SearchWorker(QThread):
     results_ready = Signal(list, list)
