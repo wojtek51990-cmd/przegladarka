@@ -338,9 +338,13 @@ class PoliteCrawler:
                     queue.append(link)
         return results
 
-def discover(query: str, deep=False, db_path=None):
+def discover(query: str, deep=False, db_path=None, extra_seeds=None):
     db = SourceDB(db_path)
     seed_urls, errors = [], []
+    for raw in (extra_seeds or []):
+        seed = normalize_url(raw)
+        if seed:
+            seed_urls.append(seed)
     crawler = PoliteCrawler(db)
     session = requests.Session()
     session.headers.update(HEADERS)
