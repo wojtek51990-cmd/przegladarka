@@ -1,37 +1,64 @@
-"""Independent public-web offer discovery engine.
+"""Polite product-focused public-web discovery for Przegladarka 0.4.0.
 
-The crawler stays polite: it checks robots.txt, rate-limits each host, never logs
-in, never bypasses CAPTCHAs, and only follows ordinary public HTTP(S) pages.
+Only verified commercial sources and query-matching product pages are persisted.
+The crawler stays within each seed domain, obeys robots.txt and never bypasses
+logins, CAPTCHAs, paywalls or anti-bot controls.
 """
 from __future__ import annotations
 
-import json
 import ipaddress
-import socket
-from contextlib import contextmanager
+import json
 import re
+import socket
 import sqlite3
 import time
 import urllib.robotparser
 import xml.etree.ElementTree as ET
 from collections import deque
+from contextlib import contextmanager
 from pathlib import Path
-from urllib.parse import urljoin, urlparse, urldefrag, quote_plus
+from urllib.parse import urljoin, urlparse, urldefrag
 from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup
 
-USER_AGENT = "PrzegladarkaOfferDiscovery/0.3 (+public-web; respectful crawler)"
-HEADERS = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Language": "pl-PL,pl;q=0.9,en;q=0.7"}
+USER_AGENT = "PrzegladarkaProductDiscovery/0.4 (+public-web; respectful crawler)"
+HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "pl-PL,pl;q=0.9,en;q=0.7",
+}
 TIMEOUT = 12
 MAX_BYTES = 2_000_000
-PRICE_RE = re.compile(r"(?<!\w)(\d{1,3}(?:[ .]\d{3})*(?:,\d{2})?|\d+(?:[,.]\d{2})?)\s?(zł|PLN|EUR|€|USD|\$)", re.I)
-OFFER_WORDS = ("cena", "zł", "pln", "eur", "produkt", "oferta", "sklep", "hurtownia", "producent", "dostępny", "dostepny", "koszyk", "brutto")
+PRICE_RE = re.compile(
+    r"(?<!\\w)(\\d{1,3}(?:[ .]\\d{3})*(?:,\\d{2})?|\\d+(?:[,.]\\d{2})?)\\s?(zł|PLN|EUR|€|USD|\\$)",
+    re.I,
+)
+STOP_WORDS = {
+    "i", "oraz", "lub", "do", "na", "w", "z", "za", "the", "and", "for",
+    "with", "of", "a", "an", "ml", "g", "kg", "szt", "sztuk",
+}
+ADULT_TERMS = (
+    "porn", "porno", "pornografia", "xxx", "adult content", "sex shop",
+    "sexshop", "hentai", "erotyczne", "erotyka", "webcam sex",
+)
+COMMERCIAL_TERMS = (
+    "sklep", "koszyk", "dodaj do koszyka", "dodaj do", "kup teraz",
+    "cena", "produkt", "produkty", "oferta", "hurtownia", "producent",
+    "dystrybutor", "dostępny", "dostepny", "brutto", "add to cart",
+    "shopping cart", "buy now", "price", "product", "in stock", "shop",
+    "store", "wholesale", "manufacturer",
+)
+PRODUCT_PATH_TERMS = (
+    "produkt", "products", "product", "oferta", "item", "p/", "sku",
+    "katalog", "catalog", "towar", "shop",
+)
+
 
 def domain_of(url: str) -> str:
-    host = urlparse(url).hostname or ""
-    return host.lower().removeprefix("www.")
+    return (urlparse(url).hostname or "").lower().removeprefix("www.")
+
 
 def is_public_host(host: str) -> bool:
     if not host or host.lower() in ("localhost", "localhost.localdomain"):
@@ -41,20 +68,52 @@ def is_public_host(host: str) -> bool:
     except ValueError:
         try:
             addresses = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-            return bool(addresses) and all(ipaddress.ip_address(item[4][0]).is_global for item in addresses)
+            return bool(addresses) and all(
+                ipaddress.ip_address(item[4][0]).is_global for item in addresses
+            )
         except (OSError, ValueError):
             return False
+
 
 def normalize_url(url: str) -> str:
     if not url:
         return ""
     url, _ = urldefrag(url.strip())
-    p = urlparse(url)
-    if p.scheme not in ("http", "https") or not p.hostname:
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
         return ""
-    if p.username or p.password:
+    if parsed.username or parsed.password:
         return ""
     return url
+
+
+def _normal_text(value: str) -> str:
+    value = (value or "").lower().replace("ł", "l")
+    value = re.sub(r"[^\\w]+", " ", value, flags=re.UNICODE)
+    return " ".join(value.split())
+
+
+def query_tokens(query: str) -> list[str]:
+    return [
+        token for token in _normal_text(query).split()
+        if len(token) >= 2 and token not in STOP_WORDS
+    ]
+
+
+def product_match_score(query: str, text: str) -> float:
+    tokens = query_tokens(query)
+    if not tokens:
+        return 0.0
+    haystack = f" {_normal_text(text)} "
+    matched = sum(1 for token in tokens if f" {token} " in haystack)
+    return matched / len(tokens)
+
+
+def is_adult_content(url: str, title: str, text: str) -> bool:
+    host = domain_of(url).replace(".", " ")
+    sample = f" {host} {title} {text[:12000]} ".lower()
+    return any(term in sample for term in ADULT_TERMS)
+
 
 def classify_source(title: str, text: str) -> str:
     hay = (title + " " + text).lower()
@@ -66,17 +125,18 @@ def classify_source(title: str, text: str) -> str:
         return "ogłoszenia / marketplace"
     if any(x in hay for x in ("katalog produktów", "katalog produktow", "catalog")):
         return "katalog"
-    if any(x in hay for x in ("sklep", "koszyk", "dodaj do koszyka", "shopping cart")):
+    if any(x in hay for x in ("sklep", "koszyk", "dodaj do koszyka", "shopping cart", "add to cart", "buy now")):
         return "sklep"
     return "strona / inne"
+
 
 def expand_queries(query: str) -> list[str]:
     q = " ".join(query.split())
     if not q:
         return []
     variants = [q, f'"{q}"', f"{q} cena", f"{q} sklep OR hurtownia", f"{q} producent"]
-    # Keep the original query first; remove duplicates without changing order.
     return list(dict.fromkeys(variants))
+
 
 class SourceDB:
     def __init__(self, path=None):
@@ -100,6 +160,7 @@ class SourceDB:
               currency TEXT, snippet TEXT, query TEXT, found_at TEXT DEFAULT CURRENT_TIMESTAMP);
             CREATE INDEX IF NOT EXISTS idx_offers_domain ON offers(domain);
             """)
+
     @contextmanager
     def connect(self):
         db = sqlite3.connect(self.path, timeout=20)
@@ -112,36 +173,67 @@ class SourceDB:
             raise
         finally:
             db.close()
+
     def save_source(self, domain, kind="strona"):
+        if kind == "strona / inne":
+            return
         with self.connect() as db:
-            db.execute("INSERT INTO sources(domain,source_type) VALUES(?,?) ON CONFLICT(domain) DO UPDATE SET last_seen=CURRENT_TIMESTAMP", (domain,kind))
+            db.execute(
+                "INSERT INTO sources(domain,source_type) VALUES(?,?) "
+                "ON CONFLICT(domain) DO UPDATE SET last_seen=CURRENT_TIMESTAMP,source_type=excluded.source_type",
+                (domain, kind),
+            )
+
     def save_page(self, url, domain, title, snippet, status="ok"):
         with self.connect() as db:
-            db.execute("INSERT INTO pages(url,domain,title,snippet,status) VALUES(?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET title=excluded.title,snippet=excluded.snippet,last_checked=CURRENT_TIMESTAMP,status=excluded.status", (url,domain,title,snippet,status))
-            db.execute("UPDATE sources SET pages_checked=pages_checked+1,last_seen=CURRENT_TIMESTAMP WHERE domain=?", (domain,))
+            db.execute(
+                "INSERT INTO pages(url,domain,title,snippet,status) VALUES(?,?,?,?,?) "
+                "ON CONFLICT(url) DO UPDATE SET title=excluded.title,snippet=excluded.snippet,"
+                "last_checked=CURRENT_TIMESTAMP,status=excluded.status",
+                (url, domain, title, snippet, status),
+            )
+            db.execute(
+                "UPDATE sources SET pages_checked=pages_checked+1,last_seen=CURRENT_TIMESTAMP WHERE domain=?",
+                (domain,),
+            )
+
     def save_offer(self, url, domain, title, price, currency, snippet, query):
         with self.connect() as db:
-            db.execute("INSERT INTO offers(url,domain,title,price,currency,snippet,query) VALUES(?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET title=excluded.title,price=excluded.price,currency=excluded.currency,snippet=excluded.snippet,query=excluded.query", (url,domain,title,price,currency,snippet,query))
+            db.execute(
+                "INSERT INTO offers(url,domain,title,price,currency,snippet,query) VALUES(?,?,?,?,?,?,?) "
+                "ON CONFLICT(url) DO UPDATE SET title=excluded.title,price=excluded.price,"
+                "currency=excluded.currency,snippet=excluded.snippet,query=excluded.query,found_at=CURRENT_TIMESTAMP",
+                (url, domain, title, price, currency, snippet, query),
+            )
+
     def known_sources(self, limit=100):
         with self.connect() as db:
-            return [dict(r) for r in db.execute("SELECT * FROM sources ORDER BY last_seen DESC LIMIT ?", (limit,))]
+            return [
+                dict(row) for row in db.execute(
+                    "SELECT * FROM sources WHERE source_type != 'strona / inne' "
+                    "ORDER BY last_seen DESC LIMIT ?", (limit,)
+                )
+            ]
+
     def offers_for_query(self, query, limit=100):
-        tokens = [t.lower() for t in re.findall(r"[\w-]{3,}", query)]
+        tokens = query_tokens(query)
         with self.connect() as db:
-            rows = [dict(r) for r in db.execute("SELECT * FROM offers ORDER BY found_at DESC LIMIT 500")]
+            rows = [dict(row) for row in db.execute(
+                "SELECT * FROM offers ORDER BY found_at DESC LIMIT 1000"
+            )]
         if not tokens:
-            return rows[:limit]
+            return []
         ranked = []
         for row in rows:
-            hay = (row.get("title") or "") + " " + (row.get("snippet") or "")
-            score = sum(1 for t in tokens if t in hay.lower())
-            if score:
-                ranked.append((score,row))
-        ranked.sort(key=lambda x:x[0], reverse=True)
-        return [r for _,r in ranked[:limit]]
+            score = product_match_score(query, (row.get("title") or "") + " " + (row.get("snippet") or ""))
+            if score >= 0.75:
+                ranked.append((score, row))
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        return [row for _, row in ranked[:limit]]
+
 
 class PoliteCrawler:
-    def __init__(self, db: SourceDB, max_pages=24, pages_per_domain=5):
+    def __init__(self, db: SourceDB, max_pages=24, pages_per_domain=8):
         self.db = db
         self.max_pages = max_pages
         self.pages_per_domain = pages_per_domain
@@ -152,28 +244,30 @@ class PoliteCrawler:
         self.host_public = {}
         self.errors = []
         self.pages_checked = 0
+        self.pages_rejected = 0
+
     def allowed(self, url):
-        p = urlparse(url)
-        origin = f"{p.scheme}://{p.netloc}"
+        parsed = urlparse(url)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
         if origin not in self.robots:
-            rp = RobotFileParser()
-            rp.set_url(urljoin(origin, "/robots.txt"))
+            parser = RobotFileParser()
+            parser.set_url(urljoin(origin, "/robots.txt"))
             try:
-                response = self.session.get(rp.url, timeout=5)
+                response = self.session.get(parser.url, timeout=5)
                 if response.status_code == 200:
-                    rp.parse(response.text.splitlines())
-                elif response.status_code in (401,403):
+                    parser.parse(response.text.splitlines())
+                elif response.status_code in (401, 403):
                     self.robots[origin] = None
                     return False
                 else:
-                    rp.parse(["User-agent: *", "Allow: /"])
+                    parser.parse(["User-agent: *", "Allow: /"])
             except requests.RequestException:
-                # On robots fetch failure, do not crawl this host.
                 self.robots[origin] = None
                 return False
-            self.robots[origin] = rp
-        rp = self.robots[origin]
-        return bool(rp and rp.can_fetch(USER_AGENT, url))
+            self.robots[origin] = parser
+        parser = self.robots[origin]
+        return bool(parser and parser.can_fetch(USER_AGENT, url))
+
     def fetch(self, url):
         host = domain_of(url)
         if host not in self.host_public:
@@ -190,20 +284,20 @@ class PoliteCrawler:
         try:
             response = self.session.get(url, timeout=TIMEOUT, stream=True, allow_redirects=False)
             if 300 <= response.status_code < 400:
-                redirected = normalize_url(urljoin(url, response.headers.get("Location", "")))
-                if not redirected or domain_of(redirected) != host or not self.allowed(redirected):
+                target = normalize_url(urljoin(url, response.headers.get("Location", "")))
+                if not target or domain_of(target) != host or not self.allowed(target):
                     self.errors.append(f"{host}: pominięto przekierowanie poza domenę lub niedozwolone robots.txt")
                     return None
-                response = self.session.get(redirected, timeout=TIMEOUT, stream=True, allow_redirects=False)
+                response = self.session.get(target, timeout=TIMEOUT, stream=True, allow_redirects=False)
                 if 300 <= response.status_code < 400:
                     self.errors.append(f"{host}: zbyt wiele przekierowań")
                     return None
-            if response.status_code in (401,403,429):
+            if response.status_code in (401, 403, 429):
                 self.errors.append(f"{host}: HTTP {response.status_code}")
                 return None
             response.raise_for_status()
-            ctype = response.headers.get("Content-Type","").lower()
-            if "text/html" not in ctype and "application/xhtml" not in ctype and "xml" not in ctype:
+            content_type = response.headers.get("Content-Type", "").lower()
+            if not any(kind in content_type for kind in ("text/html", "application/xhtml", "xml")):
                 return None
             chunks, size = [], 0
             for chunk in response.iter_content(65536):
@@ -212,90 +306,137 @@ class PoliteCrawler:
                     break
                 chunks.append(chunk)
             body = b"".join(chunks).decode(response.encoding or "utf-8", "replace")
-            return response.url, body, ctype
+            return response.url, body, content_type
         except requests.RequestException as exc:
             self.errors.append(f"{host}: {exc.__class__.__name__}")
             return None
-    def sitemap_urls(self, base_url, cap=20):
-        p = urlparse(base_url)
-        origin = f"{p.scheme}://{p.netloc}"
-        robots_url = urljoin(origin, "/robots.txt")
+
+    def sitemap_urls(self, base_url, cap=30):
+        parsed = urlparse(base_url)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
         found = []
         try:
-            response = self.session.get(robots_url, timeout=5)
+            response = self.session.get(urljoin(origin, "/robots.txt"), timeout=5)
             for line in response.text.splitlines():
                 if line.lower().startswith("sitemap:"):
-                    sm = line.split(":",1)[1].strip()
-                    if domain_of(sm) == domain_of(base_url):
-                        found.append(sm)
+                    sitemap = line.split(":", 1)[1].strip()
+                    if domain_of(sitemap) == domain_of(base_url):
+                        found.append(sitemap)
         except requests.RequestException:
-            pass
-        for sm in found[:3]:
+            return []
+        page_urls = []
+        for sitemap in found[:3]:
             try:
-                response = self.session.get(sm, timeout=8)
+                response = self.session.get(sitemap, timeout=8)
                 if response.status_code != 200:
                     continue
                 root = ET.fromstring(response.content)
-                for loc in root.findall(".//{*}loc"):
-                    u = normalize_url(loc.text or "")
-                    if u and domain_of(u) == domain_of(base_url):
-                        found.append(u)
-                        if len(found) >= cap:
-                            return found[:cap]
+                for node in root.findall(".//{*}loc"):
+                    target = normalize_url(node.text or "")
+                    if target and domain_of(target) == domain_of(base_url):
+                        page_urls.append(target)
+                        if len(page_urls) >= cap:
+                            return page_urls[:cap]
             except (requests.RequestException, ET.ParseError):
                 continue
-        return [u for u in found if u.startswith("http")][:cap]
+        return page_urls[:cap]
+
     def extract(self, url, html, query):
         soup = BeautifulSoup(html, "html.parser")
-        jsonld_texts = [node.string or node.get_text() for node in soup.select('script[type="application/ld+json"]')]
-        for tag in soup(["script","style","noscript","svg"]):
+        jsonld_nodes = [node.string or node.get_text() for node in soup.select('script[type="application/ld+json"]')]
+        meta_product = bool(soup.select_one('meta[property="og:type"][content*="product" i]'))
+        for tag in soup(["script", "style", "noscript", "svg"]):
             tag.decompose()
-        title = (soup.title.get_text(" ",strip=True) if soup.title else "")[:300]
-        text = re.sub(r"\s+", " ", soup.get_text(" ",strip=True))
-        snippet = text[:700]
-        price_match = PRICE_RE.search(text)
-        currency = price_match.group(2).upper() if price_match else ""
-        price = price_match.group(1) if price_match else ""
-        product_json = False
-        for jsonld_text in jsonld_texts:
+        title = (soup.title.get_text(" ", strip=True) if soup.title else "")[:300]
+        text = re.sub(r"\\s+", " ", soup.get_text(" ", strip=True))
+        snippet = text[:900]
+        product_names = []
+        json_product = False
+        structured_price = ""
+        structured_currency = ""
+        for raw in jsonld_nodes:
             try:
-                data = json.loads(jsonld_text)
-                stack = data if isinstance(data,list) else [data]
-                while stack:
-                    obj = stack.pop()
-                    if isinstance(obj,dict):
-                        if obj.get("@type") in ("Product","Offer","AggregateOffer") or (isinstance(obj.get("@type"),list) and any(t in ("Product","Offer") for t in obj["@type"])):
-                            product_json = True
-                            offers = obj.get("offers",{})
-                            if isinstance(offers,list): offers = offers[0] if offers else {}
-                            if isinstance(offers,dict):
-                                price = str(offers.get("price",price))
-                                currency = str(offers.get("priceCurrency",currency))
-                        stack.extend(v for v in obj.values() if isinstance(v,(dict,list)))
-                    elif isinstance(obj,list):
-                        stack.extend(obj)
+                parsed = json.loads(raw)
             except (ValueError, TypeError):
                 continue
-        score = sum(1 for word in OFFER_WORDS if word in text.lower())
-        offer = bool(price_match or product_json or score >= 3)
+            stack = parsed if isinstance(parsed, list) else [parsed]
+            while stack:
+                obj = stack.pop()
+                if isinstance(obj, dict):
+                    types = obj.get("@type", [])
+                    types = [types] if isinstance(types, str) else types
+                    if any(kind in ("Product", "IndividualProduct", "ProductGroup") for kind in types):
+                        json_product = True
+                        if obj.get("name"):
+                            product_names.append(str(obj["name"]))
+                        offers = obj.get("offers", {})
+                        offers = offers if isinstance(offers, list) else [offers]
+                        for offer in offers:
+                            if isinstance(offer, dict) and offer.get("price") is not None:
+                                structured_price = str(offer.get("price"))
+                                structured_currency = str(offer.get("priceCurrency", ""))
+                                break
+                    stack.extend(value for value in obj.values() if isinstance(value, (dict, list)))
+                elif isinstance(obj, list):
+                    stack.extend(obj)
+        price_match = PRICE_RE.search(text)
+        price = structured_price or (price_match.group(1) if price_match else "")
+        currency = structured_currency or (price_match.group(2).upper() if price_match else "")
+        match_text = " ".join([title, " ".join(product_names), text[:12000]])
+        relevance = product_match_score(query, match_text)
+        commercial_text = text.lower()
+        commerce_signal = (
+            json_product or meta_product
+            or any(term in commercial_text for term in COMMERCIAL_TERMS)
+            or any(term in urlparse(url).path.lower() for term in PRODUCT_PATH_TERMS)
+        )
+        source_type = classify_source(title, text[:5000])
+        commercial_source = commerce_signal and source_type != "strona / inne"
+        is_product_offer = (
+            relevance >= 0.75 and bool(price or json_product or meta_product)
+            and (json_product or meta_product or any(term in commercial_text for term in (
+                "dodaj do koszyka", "add to cart", "kup teraz", "buy now", "sklep", "cena", "price"
+            )))
+        )
         links = []
-        for a in soup.select("a[href]"):
-            target = normalize_url(urljoin(url, a.get("href","")))
-            if target and target != url:
-                if not any(x in urlparse(target).path.lower() for x in ("/login","/konto","/cart","/koszyk","/checkout","/polityka","/privacy")):
-                    links.append(target)
-        unique_links = list(dict.fromkeys(links))
-        unique_links.sort(key=lambda link: domain_of(link) != domain_of(url))
-        return title, snippet, (offer, price, currency), unique_links[:100]
+        for anchor in soup.select("a[href]"):
+            target = normalize_url(urljoin(url, anchor.get("href", "")))
+            if not target or target == url or domain_of(target) != domain_of(url):
+                continue
+            path = urlparse(target).path.lower()
+            if any(part in path for part in (
+                "/login", "/konto", "/cart", "/koszyk", "/checkout",
+                "/polityka", "/privacy", "/regulamin", "/terms",
+            )):
+                continue
+            anchor_text = anchor.get_text(" ", strip=True)
+            links.append((target, anchor_text))
+        unique = {}
+        for target, anchor_text in links:
+            unique[target] = max(
+                unique.get(target, ("", -1)),
+                (anchor_text, product_match_score(query, anchor_text + " " + target)),
+                key=lambda item: item[1],
+            )
+        ranked_links = sorted(
+            unique.items(),
+            key=lambda item: (
+                item[1][1] + (0.25 if any(term in urlparse(item[0]).path.lower() for term in PRODUCT_PATH_TERMS) else 0),
+                len(urlparse(item[0]).path),
+            ),
+            reverse=True,
+        )
+        return title, snippet, (is_product_offer, price, currency), [item[0] for item in ranked_links[:100]], source_type, commercial_source, relevance
+
     def crawl(self, query, seed_urls, deep=False):
         max_pages = self.max_pages * (2 if deep else 1)
         per_domain = self.pages_per_domain * (2 if deep else 1)
         queue = deque()
         seen = set()
-        for u in seed_urls:
-            u = normalize_url(u)
-            if u:
-                queue.append(u)
+        for raw in seed_urls:
+            seed = normalize_url(raw)
+            if seed:
+                queue.append(seed)
         domain_counts = {}
         results = []
         while queue and len(seen) < max_pages:
@@ -304,39 +445,51 @@ class PoliteCrawler:
                 continue
             seen.add(url)
             domain = domain_of(url)
-            if not domain or domain_counts.get(domain,0) >= per_domain:
+            if not domain or domain_counts.get(domain, 0) >= per_domain:
                 continue
             fetched = self.fetch(url)
             if not fetched:
                 continue
-            final_url, html, ctype = fetched
-            if "xml" in ctype:
+            final_url, html, content_type = fetched
+            if "xml" in content_type:
                 try:
                     root = ET.fromstring(html)
-                    for loc in root.findall(".//{*}loc"):
-                        target = normalize_url(loc.text or "")
-                        if target and domain_of(target)==domain and target not in seen:
+                    for node in root.findall(".//{*}loc"):
+                        target = normalize_url(node.text or "")
+                        if target and domain_of(target) == domain and target not in seen:
                             queue.append(target)
                 except ET.ParseError:
                     pass
                 continue
-            domain_counts[domain] = domain_counts.get(domain,0)+1
-            title, snippet, offer_data, links = self.extract(final_url, html, query)
             self.pages_checked += 1
-            self.db.save_source(domain, classify_source(title, snippet))
-            self.db.save_page(final_url, domain, title, snippet)
+            title, snippet, offer_data, links, source_type, commercial_source, relevance = self.extract(final_url, html, query)
+            if is_adult_content(final_url, title, snippet):
+                self.pages_rejected += 1
+                continue
+            if commercial_source:
+                self.db.save_source(domain, source_type)
             is_offer, price, currency = offer_data
             if is_offer:
+                self.db.save_page(final_url, domain, title, snippet)
                 self.db.save_offer(final_url, domain, title, price, currency, snippet, query)
-                results.append({"title":title or domain,"url":final_url,"domain":domain,"price":price,"currency":currency,"snippet":snippet[:350],"source":"Crawler"})
+                results.append({
+                    "title": title or domain, "url": final_url, "domain": domain,
+                    "price": price, "currency": currency, "snippet": snippet[:350],
+                    "source": "Crawler", "relevance": round(relevance, 2),
+                })
+            elif commercial_source and relevance >= 0.5:
+                # Keep a relevant commercial product/category page, not arbitrary pages.
+                self.db.save_page(final_url, domain, title, snippet, status="product_candidate")
+            domain_counts[domain] = domain_counts.get(domain, 0) + 1
             if domain_counts[domain] == 1:
-                for sm_url in self.sitemap_urls(final_url, cap=12 if deep else 6):
-                    if sm_url not in seen:
-                        queue.append(sm_url)
+                for sitemap_url in self.sitemap_urls(final_url, cap=30 if deep else 15):
+                    if sitemap_url not in seen:
+                        queue.append(sitemap_url)
             for link in links:
-                if link not in seen and len(queue) < max_pages*8:
+                if link not in seen and len(queue) < max_pages * 8:
                     queue.append(link)
         return results
+
 
 def discover(query: str, deep=False, db_path=None, extra_seeds=None):
     db = SourceDB(db_path)
@@ -348,28 +501,37 @@ def discover(query: str, deep=False, db_path=None, extra_seeds=None):
     crawler = PoliteCrawler(db)
     session = requests.Session()
     session.headers.update(HEADERS)
-    # Search engines are only seed-discovery channels, not the product's core index.
-    for q in expand_queries(query):
+    for search_query in expand_queries(query):
         try:
-            response = session.get("https://www.bing.com/search", params={"format":"rss","q":q}, timeout=TIMEOUT)
+            response = session.get(
+                "https://www.bing.com/search",
+                params={"format": "rss", "q": search_query},
+                timeout=TIMEOUT,
+            )
             response.raise_for_status()
             root = ET.fromstring(response.content)
             for item in root.findall(".//item"):
-                link = item.findtext("link","")
-                u = normalize_url(link)
-                if u and domain_of(u) not in ("bing.com","microsoft.com"):
-                    seed_urls.append(u)
+                target = normalize_url(item.findtext("link", ""))
+                if target and domain_of(target) not in ("bing.com", "microsoft.com"):
+                    seed_urls.append(target)
         except (requests.RequestException, ET.ParseError) as exc:
             errors.append(f"Bing: {exc.__class__.__name__}")
             break
-    # Add cached source domains as secondary candidates; don't blindly crawl every old URL.
+    # Only previously verified commercial domains are reused as crawl seeds.
     for source in db.known_sources(30):
-        if source["domain"]:
+        if source.get("domain"):
             seed_urls.append("https://" + source["domain"] + "/")
     seed_urls = list(dict.fromkeys(seed_urls))
     fresh = crawler.crawl(query, seed_urls, deep=deep) if seed_urls else []
     cached = db.offers_for_query(query, 100)
-    merged = {r["url"]:r for r in cached}
+    merged = {row["url"]: row for row in cached}
     for row in fresh:
         merged[row["url"]] = row
-    return {"results":list(merged.values())[:150],"sources":db.known_sources(200),"pages_checked":crawler.pages_checked, "errors":errors + crawler.errors[:20], "seed_count":len(seed_urls)}
+    return {
+        "results": list(merged.values())[:150],
+        "sources": db.known_sources(200),
+        "pages_checked": crawler.pages_checked,
+        "pages_rejected": crawler.pages_rejected,
+        "errors": errors + crawler.errors[:20],
+        "seed_count": len(seed_urls),
+    }
