@@ -45,7 +45,7 @@ jobs:
       - name: Build installer
         shell: cmd
         run: |
-          "%ProgramFiles(x86)%\\Inno Setup 6\\ISCC.exe" installer\\Przegladarka.iss
+          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" installer\Przegladarka.iss
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
