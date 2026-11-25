@@ -7,6 +7,8 @@ import time
 from urllib.parse import quote_plus, urlparse, parse_qs, unquote
 import webbrowser
 
+from app.discovery import discover
+
 import requests
 from bs4 import BeautifulSoup
 from PySide6.QtCore import QThread, Signal, Qt
@@ -20,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Przeglądarka"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -394,6 +396,7 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_search_tab(), "Wyszukiwanie")
+        self.tabs.addTab(self._build_discovery_tab(), "Odkrywanie ofert")
         self.tabs.addTab(self._build_diagnostics_tab(), "Diagnostyka połączenia")
         self.tabs.addTab(self._build_about_tab(), "Przejrzystość programu")
         root.addWidget(self.tabs, 1)
