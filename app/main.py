@@ -3,7 +3,7 @@ import re
 import base64
 import xml.etree.ElementTree as ET
 import concurrent.futures
-from datetime import datetime
+import time
 from urllib.parse import quote_plus, urlparse, parse_qs, unquote
 import webbrowser
 
@@ -15,16 +15,34 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QComboBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QProgressBar,
-    QAbstractItemView, QMenu
+    QAbstractItemView, QMenu, QTabWidget, QTextBrowser, QGroupBox,
+    QFormLayout
 )
 
 APP_NAME = "Przeglądarka"
-APP_VERSION = "0.1.2"
+APP_VERSION = "0.2.0"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+                  "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/rss+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "pl-PL,pl;q=0.9,en;q=0.8",
 }
 TIMEOUT = 14
+ENGINE_NAMES = [
+    "Google", "Bing", "Brave Search", "Mojeek", "DuckDuckGo",
+    "Qwant", "Ecosia", "Startpage", "Yahoo",
+]
+PROVIDER_DOMAINS = {
+    "Google": ("google.", "googleusercontent.com"),
+    "Bing": ("bing.com", "microsoft.com"),
+    "Brave Search": ("search.brave.com", "brave.com"),
+    "Mojeek": ("mojeek.com",),
+    "DuckDuckGo": ("duckduckgo.com",),
+    "Qwant": ("qwant.com",),
+    "Ecosia": ("ecosia.org",),
+    "Startpage": ("startpage.com",),
+    "Yahoo": ("yahoo.com", "search.yahoo."),
+}
 
 
 def clean_url(url):
@@ -33,6 +51,7 @@ def clean_url(url):
     url = unquote(url.strip())
     if url.startswith("//"):
         url = "https:" + url
+    host = domain_of(url)
     if "bing.com/ck/a" in url:
         try:
             encoded = parse_qs(urlparse(url).query).get("u", [""])[0]
@@ -49,6 +68,11 @@ def clean_url(url):
             url = parse_qs(urlparse(url).query).get("uddg", [url])[0]
         except Exception:
             pass
+    if "google.com/url" in url:
+        try:
+            url = parse_qs(urlparse(url).query).get("q", [url])[0]
+        except Exception:
+            pass
     if not url.startswith(("http://", "https://")):
         return ""
     return url.split("#", 1)[0]
@@ -56,61 +80,32 @@ def clean_url(url):
 
 def domain_of(url):
     try:
-        host = urlparse(url).netloc.lower()
+        host = urlparse(url).netloc.lower().split("@")[-1].split(":")[0]
         return host[4:] if host.startswith("www.") else host
     except Exception:
         return ""
 
 
-def search_duckduckgo(query):
-    # Najpierw lekka wersja HTML, która zwykle jest prostsza do odczytania.
-    endpoints = [
-        ("https://lite.duckduckgo.com/lite/?q=", "lite"),
-        ("https://html.duckduckgo.com/html/?q=", "html"),
-    ]
-    last_error = None
-    for base, mode in endpoints:
-        try:
-            response = requests.get(base + quote_plus(query), headers=HEADERS, timeout=TIMEOUT)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, "html.parser")
-            found = []
-            if mode == "lite":
-                links = soup.select("a.result-link, a.result__a")
-                for link in links:
-                    target = clean_url(link.get("href", ""))
-                    if not target or "duckduckgo.com" in domain_of(target):
-                        continue
-                    row = link.find_parent("tr") or link.parent
-                    snippet = row.get_text(" ", strip=True) if row else ""
-                    found.append({"title": link.get_text(" ", strip=True), "url": target,
-                                  "snippet": snippet[:500], "engine": "DuckDuckGo"})
-            else:
-                for item in soup.select(".result"):
-                    link = item.select_one("a.result__a")
-                    if not link:
-                        continue
-                    target = clean_url(link.get("href", ""))
-                    if not target or "duckduckgo.com" in domain_of(target):
-                        continue
-                    snippet = item.select_one(".result__snippet")
-                    found.append({"title": link.get_text(" ", strip=True), "url": target,
-                                  "snippet": snippet.get_text(" ", strip=True) if snippet else "",
-                                  "engine": "DuckDuckGo"})
-            if found:
-                return found
-            # Strona bez wyników może być stroną blokady, a nie prawdziwym pustym wynikiem.
-            page_text = soup.get_text(" ", strip=True).lower()
-            if any(word in page_text for word in ("captcha", "unusual traffic", "automated requests", "robot")):
-                last_error = RuntimeError("DuckDuckGo wyświetlił zabezpieczenie antybotowe.")
-            else:
-                last_error = RuntimeError("DuckDuckGo odpowiedział, ale zmienił układ strony wyników.")
-        except Exception as exc:
-            last_error = exc
-    raise RuntimeError(str(last_error or "Nie udało się odczytać wyników DuckDuckGo."))
+def is_provider_url(url, engine):
+    host = domain_of(url)
+    return any(part in host for part in PROVIDER_DOMAINS.get(engine, ()))
+
+
+def _result(title, url, snippet, engine):
+    title = re.sub(r"\s+", " ", title or "").strip()
+    url = clean_url(url)
+    if not title or not url or is_provider_url(url, engine):
+        return None
+    return {
+        "title": title[:300],
+        "url": url,
+        "snippet": re.sub(r"\s+", " ", snippet or "").strip()[:600],
+        "engine": engine,
+    }
+
 
 def parse_bing_rss(xml_content):
-    """Read Bing's RSS search feed; unlike its HTML, this has stable item fields."""
+    """Parse Bing RSS search results."""
     try:
         root = ET.fromstring(xml_content)
     except ET.ParseError:
@@ -121,106 +116,250 @@ def parse_bing_rss(xml_content):
         link_node = item.find("link")
         desc_node = item.find("description")
         title = title_node.text.strip() if title_node is not None and title_node.text else ""
-        target = clean_url(link_node.text.strip()) if link_node is not None and link_node.text else ""
-        if not title or not target:
-            continue
+        target = link_node.text.strip() if link_node is not None and link_node.text else ""
         description = ""
         if desc_node is not None and desc_node.text:
             description = BeautifulSoup(desc_node.text, "html.parser").get_text(" ", strip=True)
-        found.append({
-            "title": title,
-            "url": target,
-            "snippet": description[:500],
-            "engine": "Bing",
-        })
+        row = _result(title, target, description, "Bing")
+        if row:
+            found.append(row)
     return found
+
+
+def parse_search_html(html, engine):
+    """Extract organic-looking result links from common public SERP HTML layouts."""
+    soup = BeautifulSoup(html, "html.parser")
+    found, seen = [], set()
+
+    selectors = {
+        "Google": ("div.MjjYud a:has(h3)", "a:has(h3)", "div.g a:has(h3)"),
+        "Brave Search": ('a[data-testid="result-title"]', 'a[data-testid="result-title-a"]',
+                         ".snippet a[href]", "main h2 a[href]", "main h3 a[href]"),
+        "Mojeek": ("a.ob[href]", "a.result-title[href]", ".results-standard h2 a[href]",
+                   "main h2 a[href]", "main h3 a[href]"),
+        "DuckDuckGo": ("a.result-link[href]", "a.result__a[href]"),
+        "Qwant": (".webResult a[href]", ".result a[href]", "main h2 a[href]", "main h3 a[href]"),
+        "Ecosia": (".result a[href]", "a.result__title[href]", "main h2 a[href]", "main h3 a[href]"),
+        "Startpage": (".w-gl__result-title[href]", ".result a[href]", "main h2 a[href]",
+                      "main h3 a[href]"),
+        "Yahoo": (".dd.algo h3 a[href]", "h3 a[href]", "main h2 a[href]"),
+    }
+    links = []
+    for selector in selectors.get(engine, ("h2 a[href]", "h3 a[href]")):
+        try:
+            links.extend(soup.select(selector))
+        except Exception:
+            continue
+
+    for link in links:
+        target = clean_url(link.get("href", ""))
+        if not target or is_provider_url(target, engine) or target in seen:
+            continue
+        title = link.get_text(" ", strip=True)
+        if not title:
+            heading = link.find(["h2", "h3"])
+            title = heading.get_text(" ", strip=True) if heading else ""
+        container = link
+        for _ in range(5):
+            if container.parent is None:
+                break
+            container = container.parent
+            if container.name in ("li", "article"):
+                break
+        snippet_node = container.select_one(
+            ".VwiC3b, .IsZvec, .snippet-description, .result__snippet, "
+            ".content, .description, p"
+        )
+        snippet = snippet_node.get_text(" ", strip=True) if snippet_node else ""
+        row = _result(title, target, snippet, engine)
+        if row:
+            seen.add(target)
+            found.append(row)
+
+    # Some providers return simple HTML cards without h2/h3 wrappers.
+    if not found and engine in ("Brave Search", "Qwant", "Ecosia", "Startpage"):
+        for link in soup.select("a[href]"):
+            target = clean_url(link.get("href", ""))
+            title = link.get_text(" ", strip=True)
+            if not target or len(title) < 8 or is_provider_url(target, engine):
+                continue
+            if target in seen:
+                continue
+            row = _result(title, target, "", engine)
+            if row:
+                seen.add(target)
+                found.append(row)
+            if len(found) >= 20:
+                break
+
+    if not found:
+        text = soup.get_text(" ", strip=True).lower()
+        if any(word in text for word in (
+            "captcha", "unusual traffic", "automated requests", "verify you are",
+            "enable javascript", "access denied", "robot check"
+        )):
+            raise RuntimeError(f"{engine}: strona zabezpieczyła automatyczne zapytanie.")
+        raise RuntimeError(f"{engine}: odpowiedź odebrana, ale nie rozpoznano wyników.")
+    return found
+
+
+def _fetch_html(engine, url, query):
+    response = requests.get(url, params={"q": query}, headers=HEADERS, timeout=TIMEOUT)
+    response.raise_for_status()
+    return parse_search_html(response.text, engine)
+
+
+def search_google(query):
+    return _fetch_html("Google", "https://www.google.com/search", query)
+
+
+def search_brave(query):
+    return _fetch_html("Brave Search", "https://search.brave.com/search", query)
+
+
+def search_mojeek(query):
+    return _fetch_html("Mojeek", "https://www.mojeek.com/search", query)
+
+
+def search_duckduckgo(query):
+    errors = []
+    for url in ("https://lite.duckduckgo.com/lite/",
+                "https://html.duckduckgo.com/html/"):
+        try:
+            response = requests.get(url, params={"q": query}, headers=HEADERS, timeout=TIMEOUT)
+            response.raise_for_status()
+            try:
+                results = parse_search_html(response.text, "DuckDuckGo")
+                if results:
+                    return results
+            except Exception as exc:
+                errors.append(str(exc))
+        except Exception as exc:
+            errors.append(str(exc))
+    raise RuntimeError(errors[-1] if errors else "DuckDuckGo nie zwrócił wyników.")
+
+
+def search_qwant(query):
+    return _fetch_html("Qwant", "https://www.qwant.com/", query)
+
+
+def search_ecosia(query):
+    return _fetch_html("Ecosia", "https://www.ecosia.org/search", query)
+
+
+def search_startpage(query):
+    return _fetch_html("Startpage", "https://www.startpage.com/sp/search", query)
+
+
+def search_yahoo(query):
+    return _fetch_html("Yahoo", "https://search.yahoo.com/search", query)
 
 
 def search_bing(query):
-    # Stabilny kanał RSS Bing jest odporniejszy na zmiany układu strony HTML.
-    rss_url = "https://www.bing.com/search?format=rss&q=" + quote_plus(query)
+    rss_url = "https://www.bing.com/search"
     rss_error = None
     try:
-        response = requests.get(rss_url, headers=HEADERS, timeout=TIMEOUT)
+        response = requests.get(
+            rss_url, params={"format": "rss", "q": query},
+            headers=HEADERS, timeout=TIMEOUT
+        )
         response.raise_for_status()
-        rss_results = parse_bing_rss(response.content)
-        if rss_results:
-            return rss_results
+        results = parse_bing_rss(response.content)
+        if results:
+            return results
     except Exception as exc:
         rss_error = exc
-
-    # Awaryjny odczyt strony HTML: starsze i nowsze układy Bing.
-    url = "https://www.bing.com/search?q=" + quote_plus(query)
-    response = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, "html.parser")
-    found, seen = [], set()
-    links = []
-    for selector in ("li.b_algo h2 a[href]", "#b_results h2 a[href]",
-                     "#b_results h3 a[href]", "main h2 a[href]", "main h3 a[href]"):
-        links.extend(soup.select(selector))
-    if not links:
-        links = soup.select("h2 a[href], h3 a[href]")
-    for link in links:
-        target = clean_url(link.get("href", ""))
-        if not target or "bing.com" in domain_of(target) or target in seen:
-            continue
-        seen.add(target)
-        container = link.find_parent("li") or link.parent
-        snippet_node = container.select_one("p") if container else None
-        found.append({
-            "title": link.get_text(" ", strip=True),
-            "url": target,
-            "snippet": snippet_node.get_text(" ", strip=True) if snippet_node else "",
-            "engine": "Bing",
-        })
-    if not found:
-        page_text = soup.get_text(" ", strip=True).lower()
-        if any(word in page_text for word in ("captcha", "unusual traffic", "automated requests", "verify you are")):
-            raise RuntimeError("Bing wyświetlił zabezpieczenie antybotowe.")
+    try:
+        response = requests.get(
+            rss_url, params={"q": query}, headers=HEADERS, timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        return parse_search_html(response.text, "Bing")
+    except Exception as exc:
         detail = f" (RSS: {rss_error})" if rss_error else ""
-        raise RuntimeError("Bing odpowiedział, ale nie udało się odczytać wyników." + detail)
-    return found
+        raise RuntimeError(f"Bing: {exc}{detail}") from exc
+
+
+SEARCHERS = {
+    "Google": search_google,
+    "Bing": search_bing,
+    "Brave Search": search_brave,
+    "Mojeek": search_mojeek,
+    "DuckDuckGo": search_duckduckgo,
+    "Qwant": search_qwant,
+    "Ecosia": search_ecosia,
+    "Startpage": search_startpage,
+    "Yahoo": search_yahoo,
+}
+
+
+def merge_results(results):
+    """Deduplicate URLs while retaining every engine that found each page."""
+    merged, by_url = [], {}
+    for item in results:
+        key = item["url"].rstrip("/").lower()
+        if key in by_url:
+            existing = by_url[key]
+            names = existing["engine"].split(", ")
+            if item["engine"] not in names:
+                existing["engine"] = ", ".join(names + [item["engine"]])
+            if not existing["snippet"] and item.get("snippet"):
+                existing["snippet"] = item["snippet"]
+        else:
+            copied = dict(item)
+            by_url[key] = copied
+            merged.append(copied)
+    return merged
+
 
 class SearchWorker(QThread):
     results_ready = Signal(list, list)
 
-    def __init__(self, query, provider):
+    def __init__(self, query, engines):
         super().__init__()
         self.query = query
-        self.provider = provider
+        self.engines = engines
 
     def run(self):
-        tasks = []
-        if self.provider in ("Obie wyszukiwarki", "DuckDuckGo"):
-            tasks.append(("DuckDuckGo", search_duckduckgo))
-        if self.provider in ("Obie wyszukiwarki", "Bing"):
-            tasks.append(("Bing", search_bing))
         results, errors = [], []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            future_map = {pool.submit(fn, self.query): name for name, fn in tasks}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(9, len(self.engines) or 1)) as pool:
+            future_map = {
+                pool.submit(SEARCHERS[name], self.query): name for name in self.engines
+            }
             for future in concurrent.futures.as_completed(future_map):
                 name = future_map[future]
                 try:
                     results.extend(future.result())
                 except Exception as exc:
                     errors.append(f"{name}: {exc}")
-        unique, seen = [], set()
-        for item in results:
-            key = item["url"].rstrip("/").lower()
-            if key not in seen:
-                seen.add(key)
-                unique.append(item)
-        self.results_ready.emit(unique, errors)
+        self.results_ready.emit(merge_results(results), errors)
+
+
+class DiagnosticsWorker(QThread):
+    diagnostics_ready = Signal(list)
+
+    def run(self):
+        rows = []
+        for name in ENGINE_NAMES:
+            started = time.monotonic()
+            try:
+                results = SEARCHERS[name]("sprężarka Embraco EMT")
+                elapsed = time.monotonic() - started
+                rows.append((name, "Działa", len(results), f"{elapsed:.1f} s", "Otrzymano wyniki"))
+            except Exception as exc:
+                elapsed = time.monotonic() - started
+                rows.append((name, "Niedostępna", 0, f"{elapsed:.1f} s", str(exc)[:220]))
+        self.diagnostics_ready.emit(rows)
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"Przeglądarka {APP_VERSION} — niezależne wyszukiwanie")
-        self.resize(1120, 720)
-        self.setMinimumSize(780, 520)
+        self.resize(1180, 760)
+        self.setMinimumSize(820, 580)
         self.worker = None
+        self.diagnostics_worker = None
         self.all_results = []
         self._build_ui()
 
@@ -228,26 +367,43 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
-        root.setContentsMargins(24, 20, 24, 18)
-        root.setSpacing(12)
+        root.setContentsMargins(18, 14, 18, 14)
+        root.setSpacing(10)
 
         title = QLabel("PRZEGLĄDARKA")
         title.setFont(QFont("Segoe UI", 22, QFont.Bold))
         title.setStyleSheet("color:#183b56;")
         root.addWidget(title)
-
-        subtitle = QLabel("Szukaj produktów, części, usług i informacji w różnych źródłach internetu.")
+        subtitle = QLabel("Niezależne wyszukiwanie w wielu publicznych źródłach internetu.")
         subtitle.setStyleSheet("color:#536575;font-size:13px;")
         root.addWidget(subtitle)
 
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._build_search_tab(), "Wyszukiwanie")
+        self.tabs.addTab(self._build_diagnostics_tab(), "Diagnostyka połączenia")
+        self.tabs.addTab(self._build_about_tab(), "Przejrzystość programu")
+        root.addWidget(self.tabs, 1)
+        self.setStyleSheet(
+            "QMainWindow{background:#f7f9fa;} QLineEdit,QComboBox,QPushButton{"
+            "border:1px solid #cbd7de;border-radius:6px;padding:7px;background:white;}"
+            "QPushButton:hover{background:#edf3f6;} QTabWidget::pane{border:1px solid #d5e0e6;"
+            "background:white;border-radius:6px;} QTabBar::tab{padding:9px 16px;}"
+        )
+
+    def _build_search_tab(self):
+        tab = QWidget()
+        root = QVBoxLayout(tab)
+        root.setContentsMargins(10, 12, 10, 10)
+        root.setSpacing(10)
+
         search_row = QHBoxLayout()
         self.query = QLineEdit()
-        self.query.setPlaceholderText("Wpisz, czego szukasz, np. sprężarka Embraco EMT")
+        self.query.setPlaceholderText("Wpisz produkt, część lub temat, np. sprężarka Embraco EMT")
         self.query.setMinimumHeight(42)
         self.query.setClearButtonEnabled(True)
         self.query.returnPressed.connect(self.start_search)
         self.provider = QComboBox()
-        self.provider.addItems(["Obie wyszukiwarki", "DuckDuckGo", "Bing"])
+        self.provider.addItems(["Wszystkie źródła"] + ENGINE_NAMES)
         self.provider.setMinimumHeight(42)
         self.search_button = QPushButton("Szukaj")
         self.search_button.setMinimumHeight(42)
@@ -280,7 +436,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self.progress)
 
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Tytuł / źródło", "Opis", "Wyszukiwarka", "Adres"])
+        self.table.setHorizontalHeaderLabels(["Tytuł / źródło", "Opis", "Znalazły wyszukiwarki", "Domena"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
@@ -292,11 +448,6 @@ class MainWindow(QMainWindow):
         self.table.cellDoubleClicked.connect(self.open_selected)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
-        self.table.setStyleSheet(
-            "QTableWidget{border:1px solid #d5e0e6;border-radius:6px;gridline-color:#e7edf0;}"
-            "QHeaderView::section{background:#edf3f6;padding:8px;border:0;font-weight:bold;}"
-            "QTableWidget::item{padding:7px;}"
-        )
         root.addWidget(self.table, 1)
 
         bottom = QHBoxLayout()
@@ -304,17 +455,98 @@ class MainWindow(QMainWindow):
         self.open_button.clicked.connect(self.open_current)
         self.copy_button = QPushButton("Kopiuj adres")
         self.copy_button.clicked.connect(self.copy_current)
-        note = QLabel("Dwuklik otwiera stronę sprzedawcy lub źródła.")
+        note = QLabel("Dwuklik otwiera stronę w domyślnej przeglądarce.")
         note.setStyleSheet("color:#71808a;")
         bottom.addWidget(self.open_button)
         bottom.addWidget(self.copy_button)
         bottom.addStretch(1)
         bottom.addWidget(note)
         root.addLayout(bottom)
+        return tab
 
-        self.setStyleSheet("QMainWindow{background:#f7f9fa;} QLineEdit,QComboBox,QPushButton{"
-                           "border:1px solid #cbd7de;border-radius:6px;padding:7px;background:white;}"
-                           "QPushButton:hover{background:#edf3f6;}")
+    def _build_diagnostics_tab(self):
+        tab = QWidget()
+        root = QVBoxLayout(tab)
+        root.setContentsMargins(12, 12, 12, 12)
+        intro = QLabel(
+            "Test sprawdza rzeczywistą odpowiedź każdego źródła na przykładowe zapytanie. "
+            "Wynik zależy od internetu, regionu, limitów i zabezpieczeń dostawcy."
+        )
+        intro.setWordWrap(True)
+        root.addWidget(intro)
+        self.diag_button = QPushButton("Sprawdź połączenie ze wszystkimi źródłami")
+        self.diag_button.clicked.connect(self.run_diagnostics)
+        root.addWidget(self.diag_button)
+        self.diag_summary = QLabel("Diagnostyka nie została jeszcze uruchomiona.")
+        self.diag_summary.setStyleSheet("font-weight:bold;color:#183b56;padding:4px;")
+        root.addWidget(self.diag_summary)
+        self.diag_table = QTableWidget(0, 5)
+        self.diag_table.setHorizontalHeaderLabels(
+            ["Źródło", "Status", "Wyniki", "Czas", "Szczegóły"]
+        )
+        self.diag_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.diag_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.diag_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.diag_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.diag_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.diag_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.diag_table.setAlternatingRowColors(True)
+        self.diag_table.verticalHeader().setVisible(False)
+        root.addWidget(self.diag_table, 1)
+        hint = QLabel(
+            "Uwaga: status „Niedostępna” nie musi oznaczać awarii internetu. "
+            "Wyszukiwarka może blokować automatyczne zapytania lub zmienić stronę."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#687984;")
+        root.addWidget(hint)
+        return tab
+
+    def _build_about_tab(self):
+        tab = QWidget()
+        root = QVBoxLayout(tab)
+        root.setContentsMargins(12, 12, 12, 12)
+        info = QTextBrowser()
+        info.setOpenExternalLinks(True)
+        info.setHtml("""
+        <h2>Jak działa Przeglądarka</h2>
+        <p><b>Wersja:</b> 0.2.0</p>
+        <p>Przeglądarka jest narzędziem do wyszukiwania i porządkowania publicznie
+        dostępnych wyników. Nie jest sklepem ani platformą sprzedażową.</p>
+        <h3>Połączenia internetowe</h3>
+        <ul>
+          <li>Program wykonuje wyłącznie połączenia wychodzące HTTPS do wybranych
+          wyszukiwarek, aby wysłać zapytanie i odebrać wyniki.</li>
+          <li>Nie uruchamia serwera na komputerze i nie wymaga otwierania portów
+          na routerze ani przyjmowania połączeń z internetu.</li>
+          <li>Zapytanie jest przekazywane wybranym dostawcom wyszukiwania. Dostawcy
+          mogą przetwarzać je zgodnie z własnymi zasadami prywatności.</li>
+          <li>Otwieranie znalezionych stron odbywa się w domyślnej przeglądarce Windows.</li>
+        </ul>
+        <h3>Wyniki i ranking</h3>
+        <ul>
+          <li>Program nie sprzedaje miejsc w wynikach i nie pobiera opłat od sprzedawców.</li>
+          <li>Wyniki są zbierane z wybranych źródeł i łączone po adresie strony.</li>
+          <li>Wskazanie kilku wyszukiwarek oznacza, że każda z nich zwróciła ten adres;
+          nie jest to ocena jakości ani potwierdzenie niezależności ich indeksów.</li>
+          <li>Niektóre wyszukiwarki korzystają z cudzych indeksów lub syndykują wyniki,
+          dlatego źródła nie zawsze są od siebie niezależne.</li>
+        </ul>
+        <h3>Ograniczenia i bezpieczeństwo</h3>
+        <ul>
+          <li>Nie gwarantujemy kompletności internetu ani aktualności ofert.</li>
+          <li>Automatyczne pobieranie może być ograniczane przez dostawców, limity,
+          CAPTCHA lub zmiany układu stron.</li>
+          <li>Program nie omija logowania, CAPTCHA ani zabezpieczeń antybotowych.</li>
+          <li>Nie wykonuje płatności, nie zamawia produktów i nie wysyła danych
+          do sprzedawców poza otwarciem wybranego adresu w przeglądarce.</li>
+        </ul>
+        <p><b>Podpis cyfrowy:</b> plik instalacyjny wymaga certyfikatu wydawcy.
+        Podpis zostanie dodany do kompilacji po skonfigurowaniu certyfikatu
+        Authenticode. Brak podpisu nie jest ukrywany przez program.</p>
+        """)
+        root.addWidget(info, 1)
+        return tab
 
     def start_search(self):
         query = self.query.text().strip()
@@ -322,12 +554,14 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Brak zapytania", "Wpisz nazwę produktu, części lub temat.")
             self.query.setFocus()
             return
+        selected = self.provider.currentText()
+        engines = ENGINE_NAMES if selected == "Wszystkie źródła" else [selected]
         self.search_button.setEnabled(False)
         self.progress.show()
-        self.status.setText("Przeszukuję wybrane źródła…")
+        self.status.setText("Przeszukuję wybrane źródła równolegle…")
         self.count.setText("Wyszukiwanie…")
         self.table.setRowCount(0)
-        self.worker = SearchWorker(query, self.provider.currentText())
+        self.worker = SearchWorker(query, engines)
         self.worker.results_ready.connect(self.show_results)
         self.worker.start()
 
@@ -346,16 +580,47 @@ class MainWindow(QMainWindow):
         self.progress.hide()
         self.count.setText(f"{len(results)} wyników")
         if errors and not results:
-            self.status.setText("Nie udało się pobrać wyników. Wyszukiwarka mogła zablokować automatyczne zapytanie.")
-            QMessageBox.warning(self, "Problem z wyszukiwaniem",
-                                "Nie udało się pobrać wyników:\n\n" + "\n".join(errors[:3]) +
-                                "\n\nSpróbuj ponownie później lub wybierz inną wyszukiwarkę.")
+            self.status.setText("Żadne wybrane źródło nie zwróciło wyników.")
+            QMessageBox.warning(
+                self, "Problem z wyszukiwaniem",
+                "Nie udało się pobrać wyników:\n\n" + "\n".join(errors[:6]) +
+                "\n\nOtwórz zakładkę Diagnostyka połączenia, aby sprawdzić źródła."
+            )
         elif errors:
-            self.status.setText("Część źródeł nie odpowiedziała. Pokazuję dostępne wyniki.")
+            self.status.setText(
+                f"Pokazuję dostępne wyniki. Niedostępne źródła: {len(errors)}. "
+                "Szczegóły w diagnostyce."
+            )
+        elif results:
+            self.status.setText(
+                "Wyniki połączono i usunięto duplikaty. Program nie promuje sprzedawców."
+            )
         else:
-            self.status.setText("Wyniki gotowe. Program nie promuje sprzedawców ani nie obsługuje sprzedaży.")
-        if not results and not errors:
             self.status.setText("Brak wyników dla tego zapytania.")
+
+    def run_diagnostics(self):
+        if self.diagnostics_worker and self.diagnostics_worker.isRunning():
+            return
+        self.diag_button.setEnabled(False)
+        self.diag_summary.setText("Testuję źródła — może to potrwać około 1–2 minut…")
+        self.diag_table.setRowCount(0)
+        self.diagnostics_worker = DiagnosticsWorker()
+        self.diagnostics_worker.diagnostics_ready.connect(self.show_diagnostics)
+        self.diagnostics_worker.start()
+
+    def show_diagnostics(self, rows):
+        self.diag_table.setRowCount(len(rows))
+        ok = 0
+        for row, data in enumerate(rows):
+            for col, value in enumerate(data):
+                self.diag_table.setItem(row, col, QTableWidgetItem(str(value)))
+            if data[1] == "Działa":
+                ok += 1
+        self.diag_button.setEnabled(True)
+        self.diag_summary.setText(
+            f"Test zakończony: {ok} z {len(rows)} źródeł zwróciło wyniki. "
+            "To test bieżącej dostępności, nie gwarancja przyszłego działania."
+        )
 
     def selected_url(self):
         row = self.table.currentRow()
