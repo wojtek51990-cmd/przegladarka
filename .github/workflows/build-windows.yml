@@ -39,7 +39,12 @@ jobs:
         run: |
           python tests/live_smoke.py
 
-      - name: Live public-web discovery smoke test (informational)\n        continue-on-error: true\n        run: |\n          python tests/discovery_live_smoke.py\n\n      - name: Build standalone EXE
+      - name: Live public-web discovery smoke test (informational)
+        continue-on-error: true
+        run: |
+          python tests/discovery_live_smoke.py
+
+      - name: Build standalone EXE
         run: |
           pyinstaller --noconfirm --clean --onefile --windowed --name Przegladarka app/main.py
 
