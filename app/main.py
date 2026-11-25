@@ -324,7 +324,7 @@ class MainWindow(QMainWindow):
           <li>Nie gwarantuje kompletności Internetu. Wyniki zależą od katalogu startowego, publicznej dostępności stron i jakości ich map witryn.</li>
         </ul>
         <p><b>Podpis cyfrowy:</b> podpis Authenticode wymaga certyfikatu wydawcy. Brak podpisu jest jawnie oznaczany w artefaktach kompilacji.</p>
-        """))
+        """)
         root.addWidget(info, 1)
         return tab
 
