@@ -17,8 +17,8 @@ QUERY = "sprężarka Embraco EMT"
 def main():
     successful = 0
     for name, search in (
+        ("Bing RSS/HTML", search_bing),
         ("DuckDuckGo", search_duckduckgo),
-        ("Bing", search_bing),
     ):
         try:
             results = search(QUERY)
