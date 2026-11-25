@@ -204,6 +204,7 @@ class PoliteCrawler:
         return [u for u in found if u.startswith("http")][:cap]
     def extract(self, url, html, query):
         soup = BeautifulSoup(html, "html.parser")
+        jsonld_texts = [node.string or node.get_text() for node in soup.select('script[type="application/ld+json"]')]
         for tag in soup(["script","style","noscript","svg"]):
             tag.decompose()
         title = (soup.title.get_text(" ",strip=True) if soup.title else "")[:300]
@@ -213,9 +214,9 @@ class PoliteCrawler:
         currency = price_match.group(2).upper() if price_match else ""
         price = price_match.group(1) if price_match else ""
         product_json = False
-        for node in soup.select('script[type="application/ld+json"]'):
+        for jsonld_text in jsonld_texts:
             try:
-                data = json.loads(node.string or node.get_text())
+                data = json.loads(jsonld_text)
                 stack = data if isinstance(data,list) else [data]
                 while stack:
                     obj = stack.pop()
