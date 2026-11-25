@@ -35,6 +35,7 @@ PRICE_RE = re.compile(
     r"(?<!\w)(\d{1,3}(?:[ .]\d{3})*(?:,\d{2})?|\d+(?:[,.]\d{2})?)\s?(zł|PLN|EUR|€|USD|\$)",
     re.I,
 )
+VALID_SOURCE_TYPES = {"hurtownia / dystrybutor", "producent", "ogłoszenia / marketplace", "katalog", "sklep"}
 STOP_WORDS = {
     "i", "oraz", "lub", "do", "na", "w", "z", "za", "the", "and", "for",
     "with", "of", "a", "an", "ml", "g", "kg", "szt", "sztuk",
@@ -175,7 +176,7 @@ class SourceDB:
             db.close()
 
     def save_source(self, domain, kind="strona"):
-        if kind == "strona / inne":
+        if kind not in VALID_SOURCE_TYPES:
             return
         with self.connect() as db:
             db.execute(
@@ -391,7 +392,9 @@ class PoliteCrawler:
             or any(term in urlparse(url).path.lower() for term in PRODUCT_PATH_TERMS)
         )
         source_type = classify_source(title, text[:5000])
-        commercial_source = commerce_signal and source_type != "strona / inne"
+        if (json_product or meta_product) and source_type == "strona / inne":
+            source_type = "sklep"
+        commercial_source = commerce_signal and source_type in VALID_SOURCE_TYPES
         is_product_offer = (
             relevance >= 0.75 and bool(price or json_product or meta_product)
             and (json_product or meta_product or any(term in commercial_text for term in (
