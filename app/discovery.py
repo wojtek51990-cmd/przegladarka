@@ -252,7 +252,7 @@ class PoliteCrawler:
         links = []
         for a in soup.select("a[href]"):
             target = normalize_url(urljoin(url, a.get("href","")))
-            if target and domain_of(target) == domain_of(url):
+            if target and target != url:
                 if not any(x in urlparse(target).path.lower() for x in ("/login","/konto","/cart","/koszyk","/checkout","/polityka","/privacy")):
                     links.append(target)
         unique_links = list(dict.fromkeys(links))
@@ -277,7 +277,6 @@ class PoliteCrawler:
             domain = domain_of(url)
             if not domain or domain_counts.get(domain,0) >= per_domain:
                 continue
-            self.db.save_source(domain)
             fetched = self.fetch(url)
             if not fetched:
                 continue
