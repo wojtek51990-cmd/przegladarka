@@ -317,7 +317,7 @@ class PoliteCrawler:
         origin = f"{parsed.scheme}://{parsed.netloc}"
         found = []
         try:
-            response = self.session.get(urljoin(origin, "/robots.txt"), timeout=5)
+            response = self.session.get(urljoin(origin, "/robots.txt"), timeout=3)
             for line in response.text.splitlines():
                 if line.lower().startswith("sitemap:"):
                     sitemap = line.split(":", 1)[1].strip()
@@ -326,9 +326,9 @@ class PoliteCrawler:
         except requests.RequestException:
             return []
         page_urls = []
-        for sitemap in found[:3]:
+        for sitemap in found[:1]:
             try:
-                response = self.session.get(sitemap, timeout=8)
+                response = self.session.get(sitemap, timeout=4)
                 if response.status_code != 200:
                     continue
                 root = ET.fromstring(response.content)
