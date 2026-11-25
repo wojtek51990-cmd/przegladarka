@@ -26,6 +26,15 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Run automated parser tests
+        run: |
+          python -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Live search smoke test (external services may block automation)
+        continue-on-error: true
+        run: |
+          python tests/live_smoke.py
+
       - name: Build standalone EXE
         run: |
           pyinstaller --noconfirm --clean --onefile --windowed --name Przegladarka app/main.py
@@ -36,7 +45,7 @@ jobs:
       - name: Build installer
         shell: cmd
         run: |
-          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" installer\Przegladarka.iss
+          "%ProgramFiles(x86)%\\Inno Setup 6\\ISCC.exe" installer\\Przegladarka.iss
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
