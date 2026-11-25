@@ -7,7 +7,10 @@ import time
 from urllib.parse import quote_plus, urlparse, parse_qs, unquote
 import webbrowser
 
-from app.discovery import discover
+try:
+    from app.discovery import discover
+except ModuleNotFoundError:
+    from discovery import discover
 
 import requests
 from bs4 import BeautifulSoup
