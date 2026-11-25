@@ -35,7 +35,8 @@ jobs:
         run: |
           python -m unittest discover -s tests -p "test_*.py" -v
 
-      - name: Check live search providers
+      - name: Check live search providers (informational)
+        continue-on-error: true
         run: |
           python tests/live_smoke.py
 
