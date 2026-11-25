@@ -353,20 +353,25 @@ class DiagnosticsWorker(QThread):
             response.raise_for_status()
             elapsed = time.monotonic() - started
             rows.append(("Internet (HTTPS)", "Działa", 1, f"{elapsed:.1f} s",
-                         "Połączenie wychodzące HTTPS jest dostępne"))
+                         "Połączenie HTTPS dostępne"))
         except Exception as exc:
             elapsed = time.monotonic() - started
             rows.append(("Internet (HTTPS)", "Brak potwierdzenia", 0, f"{elapsed:.1f} s",
                          str(exc)[:220]))
-        for name in ENGINE_NAMES:
-            started = time.monotonic()
-            try:
-                results = SEARCHERS[name]("sprężarka Embraco EMT")
-                elapsed = time.monotonic() - started
-                rows.append((name, "Działa", len(results), f"{elapsed:.1f} s", "Otrzymano wyniki"))
-            except Exception as exc:
-                elapsed = time.monotonic() - started
-                rows.append((name, "Niedostępna", 0, f"{elapsed:.1f} s", str(exc)[:220]))
+        started = time.monotonic()
+        try:
+            data = discover("Raspberry Pi 5", deep=False)
+            elapsed = time.monotonic() - started
+            rows.append(("Własny robot", "Działa" if data.get("pages_checked", 0) else "Brak stron",
+                         data.get("pages_checked", 0), f"{elapsed:.1f} s",
+                         f"Domeny startowe: {data.get('seed_count', 0)}; "
+                         f"oferty: {len(data.get('results', []))}; "
+                         f"odrzucone: {data.get('pages_rejected', 0)}"))
+            rows.append(("Baza SQLite", "Działa", len(data.get("sources", [])), "-",
+                         "Odczyt i zapis indeksu lokalnego"))
+        except Exception as exc:
+            elapsed = time.monotonic() - started
+            rows.append(("Własny robot", "Błąd", 0, f"{elapsed:.1f} s", str(exc)[:220]))
         self.diagnostics_ready.emit(rows)
 
 
