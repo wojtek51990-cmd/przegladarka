@@ -35,8 +35,7 @@ jobs:
         run: |
           python -m unittest discover -s tests -p "test_*.py" -v
 
-      - name: Live public-web discovery smoke test (informational)
-        continue-on-error: true
+      - name: Required live independent product-search test
         run: |
           python tests/discovery_live_smoke.py
 
