@@ -1,5 +1,5 @@
 #define MyAppName "Przeglądarka"
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.3.0"
 #define MyAppPublisher "Przeglądarka"
 #define MyAppExeName "Przegladarka.exe"
 
@@ -11,7 +11,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\Przeglądarka
 DefaultGroupName={#MyAppName}
 OutputDir=..\dist-installer
-OutputBaseFilename=Przegladarka-Setup-Windows-v0.2.0
+OutputBaseFilename=Przegladarka-Setup-Windows-v0.3.0
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
