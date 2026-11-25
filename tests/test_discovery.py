@@ -22,6 +22,11 @@ class DiscoveryTests(unittest.TestCase):
             db.save_offer("https://example.com/a","example.com","Pompa","123","PLN","Opis","pompa")
             self.assertEqual(db.known_sources()[0]["domain"],"example.com")
             self.assertEqual(db.offers_for_query("pompa")[0]["price"],"123")
+    def test_price_expression_detects_polish_currency(self):
+        from app.discovery import PRICE_RE
+        match = PRICE_RE.search('Cena: 1 249,99 zł brutto')
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), '1 249,99')
     def test_extract_detects_jsonld_offer_and_internal_links(self):
         with tempfile.TemporaryDirectory() as tmp:
             crawler = PoliteCrawler(SourceDB(Path(tmp) / "db.sqlite3"))
