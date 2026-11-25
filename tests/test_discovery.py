@@ -8,6 +8,10 @@ class DiscoveryTests(unittest.TestCase):
     def test_query_expansion_keeps_original_first_and_unique(self):
         self.assertEqual(expand_queries("  pompa ciepła  ")[0], "pompa ciepła")
         self.assertEqual(len(expand_queries("pompa")), len(set(expand_queries("pompa"))))
+    def test_private_hosts_are_rejected(self):
+        from app.discovery import is_public_host
+        self.assertFalse(is_public_host("127.0.0.1"))
+        self.assertFalse(is_public_host("localhost"))
     def test_normalize_rejects_non_http_and_credentials(self):
         self.assertEqual(normalize_url("https://example.com/a#b"), "https://example.com/a")
         self.assertEqual(normalize_url("javascript:alert(1)"), "")
