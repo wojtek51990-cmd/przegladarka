@@ -6,6 +6,8 @@ in, never bypasses CAPTCHAs, and only follows ordinary public HTTP(S) pages.
 from __future__ import annotations
 
 import json
+import ipaddress
+import socket
 from contextlib import contextmanager
 import re
 import sqlite3
@@ -30,6 +32,18 @@ OFFER_WORDS = ("cena", "zł", "pln", "eur", "produkt", "oferta", "sklep", "hurto
 def domain_of(url: str) -> str:
     host = urlparse(url).hostname or ""
     return host.lower().removeprefix("www.")
+
+def is_public_host(host: str) -> bool:
+    if not host or host.lower() in ("localhost", "localhost.localdomain"):
+        return False
+    try:
+        return ipaddress.ip_address(host).is_global
+    except ValueError:
+        try:
+            addresses = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+            return bool(addresses) and all(ipaddress.ip_address(item[4][0]).is_global for item in addresses)
+        except (OSError, ValueError):
+            return False
 
 def normalize_url(url: str) -> str:
     if not url:
@@ -135,6 +149,7 @@ class PoliteCrawler:
         self.session.headers.update(HEADERS)
         self.robots = {}
         self.last_request = {}
+        self.host_public = {}
         self.errors = []
         self.pages_checked = 0
     def allowed(self, url):
@@ -161,6 +176,11 @@ class PoliteCrawler:
         return bool(rp and rp.can_fetch(USER_AGENT, url))
     def fetch(self, url):
         host = domain_of(url)
+        if host not in self.host_public:
+            self.host_public[host] = is_public_host(host)
+        if not self.host_public[host]:
+            self.errors.append(f"{host}: pominięto adres niepubliczny lub nierozwiązywalny")
+            return None
         wait = 1.0 - (time.monotonic() - self.last_request.get(host, 0))
         if wait > 0:
             time.sleep(wait)
@@ -168,7 +188,16 @@ class PoliteCrawler:
         if not self.allowed(url):
             return None
         try:
-            response = self.session.get(url, timeout=TIMEOUT, stream=True, allow_redirects=True)
+            response = self.session.get(url, timeout=TIMEOUT, stream=True, allow_redirects=False)
+            if 300 <= response.status_code < 400:
+                redirected = normalize_url(urljoin(url, response.headers.get("Location", "")))
+                if not redirected or domain_of(redirected) != host or not self.allowed(redirected):
+                    self.errors.append(f"{host}: pominięto przekierowanie poza domenę lub niedozwolone robots.txt")
+                    return None
+                response = self.session.get(redirected, timeout=TIMEOUT, stream=True, allow_redirects=False)
+                if 300 <= response.status_code < 400:
+                    self.errors.append(f"{host}: zbyt wiele przekierowań")
+                    return None
             if response.status_code in (401,403,429):
                 self.errors.append(f"{host}: HTTP {response.status_code}")
                 return None
