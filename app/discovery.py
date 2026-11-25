@@ -113,6 +113,7 @@ class PoliteCrawler:
         self.robots = {}
         self.last_request = {}
         self.errors = []
+        self.pages_checked = 0
     def allowed(self, url):
         p = urlparse(url)
         origin = f"{p.scheme}://{p.netloc}"
@@ -169,8 +170,6 @@ class PoliteCrawler:
         robots_url = urljoin(origin, "/robots.txt")
         found = []
         try:
-            if not self.allowed(robots_url):
-                return found
             response = self.session.get(robots_url, timeout=5)
             for line in response.text.splitlines():
                 if line.lower().startswith("sitemap:"):
@@ -269,6 +268,7 @@ class PoliteCrawler:
                 continue
             domain_counts[domain] = domain_counts.get(domain,0)+1
             title, snippet, offer_data, links = self.extract(final_url, html, query)
+            self.pages_checked += 1
             self.db.save_page(final_url, domain, title, snippet)
             is_offer, price, currency = offer_data
             if is_offer:
@@ -313,4 +313,4 @@ def discover(query: str, deep=False, db_path=None):
     merged = {r["url"]:r for r in cached}
     for row in fresh:
         merged[row["url"]] = row
-    return {"results":list(merged.values())[:150],"sources":db.known_sources(200),"pages_checked":sum(1 for _ in ()), "errors":errors + crawler.errors[:20], "seed_count":len(seed_urls)}
+    return {"results":list(merged.values())[:150],"sources":db.known_sources(200),"pages_checked":crawler.pages_checked, "errors":errors + crawler.errors[:20], "seed_count":len(seed_urls)}
