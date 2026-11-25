@@ -30,6 +30,11 @@ jobs:
         run: |
           python -m unittest discover -s tests -p "test_*.py" -v
 
+      - name: Diagnose live search provider responses
+        continue-on-error: true
+        run: |
+          python tests/provider_probe.py
+
       - name: Live search smoke test (external services may block automation)
         continue-on-error: true
         run: |
