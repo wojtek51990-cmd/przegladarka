@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Przeglądarka"
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.4.0"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -683,7 +683,7 @@ class MainWindow(QMainWindow):
             return
         if self.discovery_worker and self.discovery_worker.isRunning(): return
         self.discovery_button.setEnabled(False)
-        self.discovery_status.setText("Odkrywam publiczne strony, sprawdzam mapy witryn i zapisuję źródła…")
+        self.discovery_status.setText("Sprawdzam strony sklepów i produktów; odrzucam niepowiązane witryny…")
         self.discovery_table.setRowCount(0)
         seeds = [x.strip() for x in re.split(r'[;\n,]+', self.discovery_seeds.text()) if x.strip()]
         self.discovery_worker = DiscoveryWorker(query, self.discovery_depth.currentIndex() == 1, seeds)
@@ -703,7 +703,7 @@ class MainWindow(QMainWindow):
             self.discovery_table.setItem(row, 3, QTableWidgetItem(item.get("snippet", "")))
             self.discovery_table.setItem(row, 4, QTableWidgetItem(item.get("url", "")))
         self.discovery_button.setEnabled(True)
-        self.discovery_status.setText(f"Sprawdzone strony: {data.get('pages_checked', 0)} | znane domeny: {len(data.get('sources', []))} | adresy startowe: {data.get('seed_count', 0)} | wykryte oferty: {len(rows)}")
+        self.discovery_status.setText(f"Sprawdzone strony: {data.get('pages_checked', 0)} | odrzucone: {data.get('pages_rejected', 0)} | zweryfikowane domeny: {len(data.get('sources', []))} | adresy startowe: {data.get('seed_count', 0)} | dopasowane oferty: {len(rows)}")
         errors = data.get("errors", [])
         self.discovery_summary.setText(("Uwagi: " + "; ".join(errors[:5])) if errors else "Skanowanie zakończone. Wyniki i źródła zapisano w lokalnej bazie.")
 
