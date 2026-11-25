@@ -1,4 +1,4 @@
-"""Polite product-focused public-web discovery for Przegladarka 0.4.0.
+"""Polite product-focused public-web discovery for Przegladarka 0.5.0.
 
 Only verified commercial sources and query-matching product pages are persisted.
 The crawler stays within each seed domain, obeys robots.txt and never bypasses
@@ -23,7 +23,7 @@ from urllib.robotparser import RobotFileParser
 import requests
 from bs4 import BeautifulSoup
 
-USER_AGENT = "PrzegladarkaProductDiscovery/0.4 (+public-web; respectful crawler)"
+USER_AGENT = "PrzegladarkaIndependentCrawler/0.5 (+public-web; respectful crawler)"
 HEADERS = {
     "User-Agent": USER_AGENT,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -485,56 +485,53 @@ class PoliteCrawler:
                 self.db.save_page(final_url, domain, title, snippet, status="product_candidate")
             domain_counts[domain] = domain_counts.get(domain, 0) + 1
             if domain_counts[domain] == 1:
-                for sitemap_url in self.sitemap_urls(final_url, cap=30 if deep else 15):
+                for sitemap_url in reversed(self.sitemap_urls(final_url, cap=60 if deep else 30)):
                     if sitemap_url not in seen:
-                        queue.append(sitemap_url)
+                        queue.appendleft(sitemap_url)
             for link in links:
                 if link not in seen and len(queue) < max_pages * 8:
                     queue.append(link)
         return results
 
 
+def load_seed_catalog():
+    """Bootstrap list for independent crawling; not a third-party search index."""
+    catalog_path = Path(__file__).with_name("seed_catalog.json")
+    try:
+        data = json.loads(catalog_path.read_text(encoding="utf-8"))
+        return [url for url in data.get("seeds", []) if normalize_url(url)]
+    except (OSError, ValueError, TypeError):
+        return []
+
+
 def discover(query: str, deep=False, db_path=None, extra_seeds=None):
+    """Search public pages using our crawler, sitemaps and local SQLite index only."""
     db = SourceDB(db_path)
-    seed_urls, errors = [], []
+    seed_urls = list(load_seed_catalog())
     for raw in (extra_seeds or []):
         seed = normalize_url(raw)
         if seed:
             seed_urls.append(seed)
-    crawler = PoliteCrawler(db)
-    session = requests.Session()
-    session.headers.update(HEADERS)
-    for search_query in expand_queries(query):
-        try:
-            response = session.get(
-                "https://www.bing.com/search",
-                params={"format": "rss", "q": search_query},
-                timeout=TIMEOUT,
-            )
-            response.raise_for_status()
-            root = ET.fromstring(response.content)
-            for item in root.findall(".//item"):
-                target = normalize_url(item.findtext("link", ""))
-                if target and domain_of(target) not in ("bing.com", "microsoft.com"):
-                    seed_urls.append(target)
-        except (requests.RequestException, ET.ParseError) as exc:
-            errors.append(f"Bing: {exc.__class__.__name__}")
-            break
-    # Only previously verified commercial domains are reused as crawl seeds.
-    for source in db.known_sources(30):
+    for source in db.known_sources(100):
         if source.get("domain"):
             seed_urls.append("https://" + source["domain"] + "/")
     seed_urls = list(dict.fromkeys(seed_urls))
+    crawler = PoliteCrawler(db, max_pages=60 if deep else 30,
+                            pages_per_domain=12 if deep else 6)
     fresh = crawler.crawl(query, seed_urls, deep=deep) if seed_urls else []
     cached = db.offers_for_query(query, 100)
     merged = {row["url"]: row for row in cached}
     for row in fresh:
         merged[row["url"]] = row
+    ranked = sorted(merged.values(),
+                    key=lambda row: (row.get("relevance", 0), bool(row.get("price")),
+                                     row.get("title", "")), reverse=True)
     return {
-        "results": list(merged.values())[:150],
+        "results": ranked[:150],
         "sources": db.known_sources(200),
         "pages_checked": crawler.pages_checked,
         "pages_rejected": crawler.pages_rejected,
-        "errors": errors + crawler.errors[:20],
+        "errors": crawler.errors[:30],
         "seed_count": len(seed_urls),
+        "engine_independent": True,
     }
