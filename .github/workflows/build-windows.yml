@@ -1,4 +1,4 @@
-name: Build Windows installer
+name: Test Przegladarka (bez kompilacji EXE)
 
 on:
   push:
@@ -11,11 +11,9 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  test:
     runs-on: windows-latest
     env:
-      WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
-      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,76 +27,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller
 
       - name: Run automated parser and merge tests
         run: |
           python -m unittest discover -s tests -p "test_*.py" -v
 
-      - name: Required live independent product-search test
+      - name: Required Rossmann NIVEA live product-search regression
         run: |
-          python tests/discovery_live_smoke.py
+          python tests/rossmann_live_smoke.py
 
-      - name: Build standalone EXE
-        run: |
-          pyinstaller --noconfirm --clean --onefile --windowed --add-data "app/seed_catalog.json;app" --name Przegladarka app/main.py
-
-      - name: Sign application EXE (optional Authenticode certificate)
-        if: env.WINDOWS_CERTIFICATE_BASE64 != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
-        shell: pwsh
-        run: |
-          $certificatePath = Join-Path $env:RUNNER_TEMP "publisher-certificate.pfx"
-          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
-          $signTool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
-            Where-Object { $_.FullName -match '\\x64\\signtool.exe$' } |
-            Sort-Object FullName -Descending | Select-Object -First 1
-          if (-not $signTool) { throw "Windows SDK signtool.exe was not found." }
-          & $signTool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $certificatePath /p $env:WINDOWS_CERTIFICATE_PASSWORD "dist\Przegladarka.exe"
-          if ($LASTEXITCODE -ne 0) { throw "Signing application EXE failed." }
-          "Application EXE: Authenticode signed." | Out-File "dist\SIGNATURE_STATUS.txt" -Encoding utf8
-
-      - name: Mark application EXE as unsigned when no certificate is configured
-        if: env.WINDOWS_CERTIFICATE_BASE64 == '' || env.WINDOWS_CERTIFICATE_PASSWORD == ''
-        shell: pwsh
-        run: |
-          "Application EXE: unsigned; configure WINDOWS_CERTIFICATE_BASE64 and WINDOWS_CERTIFICATE_PASSWORD repository secrets to sign." |
-            Out-File "dist\SIGNATURE_STATUS.txt" -Encoding utf8
-
-      - name: Install Inno Setup
-        run: choco install innosetup --yes --no-progress
-
-      - name: Build installer
-        shell: cmd
-        run: |
-          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" installer\Przegladarka.iss
-
-      - name: Sign installer (optional Authenticode certificate)
-        if: env.WINDOWS_CERTIFICATE_BASE64 != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
-        shell: pwsh
-        run: |
-          $certificatePath = Join-Path $env:RUNNER_TEMP "publisher-certificate.pfx"
-          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
-          $signTool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
-            Where-Object { $_.FullName -match '\\x64\\signtool.exe$' } |
-            Sort-Object FullName -Descending | Select-Object -First 1
-          if (-not $signTool) { throw "Windows SDK signtool.exe was not found." }
-          & $signTool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $certificatePath /p $env:WINDOWS_CERTIFICATE_PASSWORD "dist-installer\Przegladarka-Setup-Windows-v0.5.0.exe"
-          if ($LASTEXITCODE -ne 0) { throw "Signing installer failed." }
-          "Installer: Authenticode signed." | Out-File "dist-installer\SIGNATURE_STATUS.txt" -Encoding utf8
-
-      - name: Mark installer as unsigned when no certificate is configured
-        if: env.WINDOWS_CERTIFICATE_BASE64 == '' || env.WINDOWS_CERTIFICATE_PASSWORD == ''
-        shell: pwsh
-        run: |
-          "Installer: unsigned; a trusted publisher certificate is not configured." |
-            Out-File "dist-installer\SIGNATURE_STATUS.txt" -Encoding utf8
-
-      - name: Upload installer and signature status
-        uses: actions/upload-artifact@v4
-        with:
-          name: Przegladarka-Setup-Windows-v0.5.0
-          path: |
-            dist-installer/Przegladarka-Setup-Windows-v0.5.0.exe
-            dist-installer/SIGNATURE_STATUS.txt
-          if-no-files-found: error
-          retention-days: 30
