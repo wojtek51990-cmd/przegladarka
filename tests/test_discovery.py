@@ -118,6 +118,31 @@ class DiscoveryTests(unittest.TestCase):
             )
             self.assertFalse(offer[0])
 
+    def test_rossmann_search_product_links_are_prioritized(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            crawler = PoliteCrawler(SourceDB(Path(tmp) / "db.sqlite3"), max_pages=5, pages_per_domain=5)
+            search_url = "https://www.rossmann.pl/szukaj?Search=krem+nivea"
+            product_url = "https://www.rossmann.pl/Produkt/Kremy/Nivea-Creme,9399"
+            other_url = "https://other.example/"
+            search_html = """<html><head><title>krem nivea - wyniki</title></head>
+            <body><a href="/Produkt/Kremy/Nivea-Creme,9399">NIVEA Creme krem 50 ml</a>
+            <a href="/kategorie/pielegnacja">Pielęgnacja</a></body></html>"""
+            product_html = """<html><head><title>NIVEA Creme krem uniwersalny 50 ml</title>
+            <meta property="og:type" content="product"></head>
+            <body><p>Krem NIVEA 7,29 zł. Dodaj do koszyka.</p></body></html>"""
+            other_html = "<html><head><title>Inna strona</title></head><body>tekst</body></html>"
+            def fake_fetch(url):
+                if url == search_url:
+                    return search_url, search_html, "text/html"
+                if url == product_url:
+                    return product_url, product_html, "text/html"
+                return other_url, other_html, "text/html"
+            with patch.object(crawler, "fetch", side_effect=fake_fetch) as fetch:
+                with patch.object(crawler, "sitemap_urls", return_value=[]):
+                    crawler.crawl("krem nivea", [search_url, other_url], deep=True)
+            fetched_urls = [call.args[0] for call in fetch.call_args_list]
+            self.assertEqual(fetched_urls[:2], [search_url, product_url])
+
     def test_rossmann_product_detail_with_price_is_confirmed(self):
         with tempfile.TemporaryDirectory() as tmp:
             crawler = PoliteCrawler(SourceDB(Path(tmp) / "db.sqlite3"))
