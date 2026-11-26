@@ -503,9 +503,26 @@ class PoliteCrawler:
                 for sitemap_url in reversed(self.sitemap_urls(final_url, cap=60 if deep else 30)):
                     if sitemap_url not in seen:
                         queue.appendleft(sitemap_url)
-            for link in links:
-                if link not in seen and len(queue) < max_pages * 8:
-                    queue.append(link)
+            # A first-party search results page is the most valuable entry point:
+            # visit its matching product detail links before generic seed/sitemap
+            # URLs, otherwise the global page budget can be consumed first.
+            path_lower = urlparse(final_url).path.lower()
+            if domain == "rossmann.pl" and path_lower.startswith("/szukaj"):
+                priority_links = [
+                    link for link in links
+                    if "/produkt/" in urlparse(link).path.lower()
+                ]
+                for link in reversed(priority_links):
+                    if link not in seen and len(queue) < max_pages * 8:
+                        queue.appendleft(link)
+                priority_set = set(priority_links)
+                for link in links:
+                    if link not in priority_set and link not in seen and len(queue) < max_pages * 8:
+                        queue.append(link)
+            else:
+                for link in links:
+                    if link not in seen and len(queue) < max_pages * 8:
+                        queue.append(link)
         return results
 
 
