@@ -2,6 +2,7 @@
   "schema_version": 1,
   "description": "Bootstrap domains for independent public-web crawling; not an endorsement or complete index.",
   "seeds": [
+    "https://www.rossmann.pl/",
     "https://www.tme.eu/",
     "https://www.botland.com.pl/",
     "https://kamami.pl/",
