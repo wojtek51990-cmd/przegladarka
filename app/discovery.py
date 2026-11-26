@@ -417,6 +417,62 @@ class PoliteCrawler:
             and (json_product or meta_product or product_detail_url)
         )
         links = []
+        # Detect public GET search forms on each shop instead of guessing that
+        # every retailer uses the same query parameter. This mirrors entering
+        # the user's phrase into the shop's own search box.
+        current = urlparse(url)
+        already_searching = bool(current.query) or any(
+            marker in current.path.lower() for marker in ("/szukaj", "/search", "/wyniki")
+        )
+        if not already_searching:
+            for form in soup.select("form"):
+                method = (form.get("method") or "get").strip().lower()
+                if method != "get":
+                    continue
+                action = normalize_url(urljoin(url, form.get("action") or url))
+                if not action or domain_of(action) != domain_of(url):
+                    continue
+                search_field = None
+                for field in form.select("input[name], textarea[name]"):
+                    name = (field.get("name") or "").strip()
+                    kind = (field.get("type") or "").lower()
+                    if kind == "hidden":
+                        continue
+                    if kind == "search" or name.lower() in {
+                        "q", "query", "search", "s", "term", "keyword",
+                        "phrase", "text", "searchterm", "search_query",
+                    }:
+                        search_field = name
+                        break
+                if not search_field:
+                    continue
+                params = {}
+                for field in form.select("input[name]"):
+                    name = (field.get("name") or "").strip()
+                    kind = (field.get("type") or "").lower()
+                    if not name or kind in {"submit", "button", "file", "password"}:
+                        continue
+                    if kind == "hidden" and any(
+                        secret in name.lower() for secret in ("token", "csrf", "auth", "session")
+                    ):
+                        continue
+                    value = field.get("value", "")
+                    if kind in {"checkbox", "radio"} and not field.has_attr("checked"):
+                        continue
+                    params[name] = query if name == search_field else value
+                for field in form.select("textarea[name]"):
+                    if field.get("name") == search_field:
+                        params[search_field] = query
+                if search_field not in params:
+                    params[search_field] = query
+                search_url = action
+                from urllib.parse import parse_qsl, urlunparse
+                parsed_action = urlparse(action)
+                merged_params = dict(parse_qsl(parsed_action.query, keep_blank_values=True))
+                merged_params.update(params)
+                search_url = urlunparse(parsed_action._replace(query=urlencode(merged_params, doseq=True)))
+                if search_url != url:
+                    links.append((search_url, "internal shop search"))
         for anchor in soup.select("a[href]"):
             target = normalize_url(urljoin(url, anchor.get("href", "")))
             if not target or target == url or domain_of(target) != domain_of(url):
