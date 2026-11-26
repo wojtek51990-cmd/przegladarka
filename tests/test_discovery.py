@@ -108,6 +108,36 @@ class DiscoveryTests(unittest.TestCase):
         urls = site_search_urls(["https://www.rossmann.pl/"], "krem nivea")
         self.assertEqual(urls, ["https://www.rossmann.pl/szukaj?Search=krem+nivea"])
 
+    def test_generic_shop_get_search_form_is_detected_and_prioritized(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            crawler = PoliteCrawler(SourceDB(Path(tmp) / "db.sqlite3"))
+            html = """<html><head><title>Sklep</title></head><body>
+            <form action="/szukaj" method="get">
+              <input type="text" name="query">
+              <input type="hidden" name="category" value="all">
+            </form>
+            <a href="/produkt/krem-nivea">Krem Nivea</a>
+            </body></html>"""
+            _, _, _, links, _, _, _ = crawler.extract(
+                "https://shop.example/", html, "krem nivea"
+            )
+            self.assertEqual(
+                links[0],
+                "https://shop.example/szukaj?query=krem+nivea&category=all"
+            )
+
+    def test_generic_shop_post_search_form_is_not_submitted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            crawler = PoliteCrawler(SourceDB(Path(tmp) / "db.sqlite3"))
+            html = """<html><body>
+            <form action="/search" method="post">
+              <input type="search" name="q">
+            </form></body></html>"""
+            _, _, _, links, _, _, _ = crawler.extract(
+                "https://shop.example/", html, "krem nivea"
+            )
+            self.assertFalse(any("/search?" in link for link in links))
+
     def test_shop_homepage_is_not_confirmed_as_product_offer(self):
         with tempfile.TemporaryDirectory() as tmp:
             crawler = PoliteCrawler(SourceDB(Path(tmp) / "db.sqlite3"))
