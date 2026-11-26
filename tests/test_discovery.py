@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from app.discovery import (
     SourceDB, expand_queries, normalize_url, domain_of, PoliteCrawler,
-    product_match_score, is_adult_content,
+    product_match_score, is_adult_content, site_search_urls,
 )
 
 
@@ -103,6 +103,34 @@ class DiscoveryTests(unittest.TestCase):
                     crawler.crawl("produkt test", ["https://adult.example/"])
             self.assertEqual(db.known_sources(), [])
             self.assertEqual(crawler.pages_rejected, 1)
+
+    def test_rossmann_direct_site_search_url_is_generated(self):
+        urls = site_search_urls(["https://www.rossmann.pl/"], "krem nivea")
+        self.assertEqual(urls, ["https://www.rossmann.pl/szukaj?Search=krem+nivea"])
+
+    def test_shop_homepage_is_not_confirmed_as_product_offer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            crawler = PoliteCrawler(SourceDB(Path(tmp) / "db.sqlite3"))
+            html = """<html><head><title>Drogeria Rossmann - Strona główna</title></head>
+            <body><p>Sklep, produkty, cena 7,29 zł, koszyk. Krem NIVEA.</p></body></html>"""
+            _, _, offer, _, _, _, _ = crawler.extract(
+                "https://www.rossmann.pl/", html, "krem nivea"
+            )
+            self.assertFalse(offer[0])
+
+    def test_rossmann_product_detail_with_price_is_confirmed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            crawler = PoliteCrawler(SourceDB(Path(tmp) / "db.sqlite3"))
+            html = """<html><head><title>NIVEA Creme krem uniwersalny 50 ml</title>
+            <meta property="og:type" content="product"></head>
+            <body><h1>NIVEA Creme</h1><p>Krem uniwersalny do twarzy, ciała i dłoni 50 ml</p>
+            <p>7,29 zł</p><button>Dodaj do koszyka</button></body></html>"""
+            _, _, offer, _, _, _, score = crawler.extract(
+                "https://www.rossmann.pl/Produkt/Kremy/Nivea-Creme,9399", html, "krem nivea"
+            )
+            self.assertTrue(offer[0])
+            self.assertEqual(offer[1], "7,29")
+            self.assertEqual(score, 1.0)
 
 
 if __name__ == "__main__":
