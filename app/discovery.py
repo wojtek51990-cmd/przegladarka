@@ -417,6 +417,7 @@ class PoliteCrawler:
             and (json_product or meta_product or product_detail_url)
         )
         links = []
+        self._last_search_form_links = set()
         # Detect public GET search forms on each shop instead of guessing that
         # every retailer uses the same query parameter. This mirrors entering
         # the user's phrase into the shop's own search box.
@@ -473,6 +474,7 @@ class PoliteCrawler:
                 search_url = urlunparse(parsed_action._replace(query=urlencode(merged_params, doseq=True)))
                 if search_url != url:
                     links.append((search_url, "internal shop search"))
+                    self._last_search_form_links.add(search_url)
         for anchor in soup.select("a[href]"):
             target = normalize_url(urljoin(url, anchor.get("href", "")))
             if not target or target == url or domain_of(target) != domain_of(url):
@@ -495,6 +497,7 @@ class PoliteCrawler:
         ranked_links = sorted(
             unique.items(),
             key=lambda item: (
+                1 if item[1][0] == "internal shop search" else 0,
                 item[1][1] + (0.25 if any(term in urlparse(item[0]).path.lower() for term in PRODUCT_PATH_TERMS) else 0),
                 len(urlparse(item[0]).path),
             ),
@@ -576,8 +579,17 @@ class PoliteCrawler:
                     if link not in priority_set and link not in seen and len(queue) < max_pages * 8:
                         queue.append(link)
             else:
-                for link in links:
+                # Visit a detected first-party search form immediately. It is
+                # the closest equivalent to a real user searching inside the shop.
+                search_links = [
+                    link for link in links
+                    if link in getattr(self, "_last_search_form_links", set())
+                ]
+                for link in reversed(search_links):
                     if link not in seen and len(queue) < max_pages * 8:
+                        queue.appendleft(link)
+                for link in links:
+                    if link not in search_links and link not in seen and len(queue) < max_pages * 8:
                         queue.append(link)
         return results
 
