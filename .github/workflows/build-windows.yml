@@ -35,3 +35,7 @@ jobs:
         run: |
           python tests/rossmann_live_smoke.py
 
+      - name: Live multi-store automatic search regression (no manual URLs)
+        run: |
+          python tests/live_auto_search_smoke.py
+
