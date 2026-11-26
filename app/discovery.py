@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
-from urllib.parse import urljoin, urlparse, urldefrag
+from urllib.parse import urljoin, urlparse, urldefrag, urlencode
 from urllib.robotparser import RobotFileParser
 
 import requests
@@ -129,6 +129,17 @@ def classify_source(title: str, text: str) -> str:
     if any(x in hay for x in ("sklep", "koszyk", "dodaj do koszyka", "shopping cart", "add to cart", "buy now")):
         return "sklep"
     return "strona / inne"
+
+
+def site_search_urls(seed_urls, query):
+    """Known first-party site-search adapters; no external search engines."""
+    urls = []
+    for raw in seed_urls:
+        parsed = urlparse(raw)
+        host = (parsed.hostname or "").lower().removeprefix("www.")
+        if host == "rossmann.pl":
+            urls.append("https://www.rossmann.pl/szukaj?" + urlencode({"Search": query}))
+    return list(dict.fromkeys(urls))
 
 
 def expand_queries(query: str) -> list[str]:
@@ -395,11 +406,15 @@ class PoliteCrawler:
         if (json_product or meta_product) and source_type == "strona / inne":
             source_type = "sklep"
         commercial_source = commerce_signal and source_type in VALID_SOURCE_TYPES
+        path = urlparse(url).path.lower()
+        product_detail_url = any(
+            marker in path for marker in ("/produkt/", "/product/", "/products/", "/p/")
+        )
+        # A shop homepage/category page is never a confirmed offer merely because
+        # it contains a price and generic words such as "sklep" or "produkt".
         is_product_offer = (
-            relevance >= 0.75 and bool(price or json_product or meta_product)
-            and (json_product or meta_product or any(term in commercial_text for term in (
-                "dodaj do koszyka", "add to cart", "kup teraz", "buy now", "sklep", "cena", "price"
-            )))
+            relevance >= 0.75 and bool(price)
+            and (json_product or meta_product or product_detail_url)
         )
         links = []
         for anchor in soup.select("a[href]"):
@@ -516,6 +531,10 @@ def discover(query: str, deep=False, db_path=None, extra_seeds=None):
         if source.get("domain"):
             seed_urls.append("https://" + source["domain"] + "/")
     seed_urls = list(dict.fromkeys(seed_urls))
+    # Search directly inside supported shops first, then crawl their public
+    # product links. This remains first-party crawling, not a search engine.
+    direct_searches = site_search_urls(seed_urls, query)
+    seed_urls = list(dict.fromkeys(direct_searches + seed_urls))
     crawler = PoliteCrawler(db, max_pages=60 if deep else 30,
                             pages_per_domain=12 if deep else 6)
     fresh = crawler.crawl(query, seed_urls, deep=deep) if seed_urls else []
@@ -533,5 +552,6 @@ def discover(query: str, deep=False, db_path=None, extra_seeds=None):
         "pages_rejected": crawler.pages_rejected,
         "errors": crawler.errors[:30],
         "seed_count": len(seed_urls),
+        "direct_site_searches": direct_searches,
         "engine_independent": True,
     }
