@@ -122,3 +122,66 @@ def extract_product_metadata(soup) -> dict:
         "availability": availability,
         "is_product": product_type.lower() == "product" or has_product_microdata,
     }
+
+
+def extract_store_search_results(soup, page_url: str, query: str) -> list[dict]:
+    """Read cards returned by a store's own search page; never infer stock."""
+    from urllib.parse import urlparse, parse_qs
+    parsed = urlparse(page_url)
+    params = {key.lower() for key in parse_qs(parsed.query)}
+    search_path = any(part in parsed.path.lower() for part in
+                      ("/search", "/szukaj", "/wyniki", "/catalogsearch"))
+    if not (search_path or params & {"q", "s", "search", "query", "text", "searchterm"}):
+        return []
+    price_re = re.compile(
+        r"(?<!\w)(\d{1,3}(?:[ .]\d{3})*(?:,\d{2})?|\d+(?:[,.]\d{2})?)\s?(zł|PLN|EUR|€|USD|\$)", re.I)
+    stock_re = re.compile(
+        r"(dostępny(?:\s+od\s+ręki)?|dostepny(?:\s+od\s+reki)?|brak\s+w\s+magazynie|"
+        r"niedostępny|niedostepny|na\s+zamówienie|na\s+zamowienie|w\s+magazynie|"
+        r"in\s+stock|out\s+of\s+stock|available|unavailable)", re.I)
+    results, seen = [], set()
+    product_href = re.compile(r"/(produkt|product|products|p|item)(/|[-_])", re.I)
+    for anchor in soup.select("a[href]"):
+        href = (anchor.get("href") or "").strip()
+        if not href or href.startswith(("#", "javascript:", "mailto:")):
+            continue
+        target = urljoin(page_url, href)
+        parsed_target = urlparse(target)
+        if parsed_target.scheme not in ("http", "https") or parsed_target.netloc.lower() != parsed.netloc.lower():
+            continue
+        if target in seen or target.rstrip("/") == page_url.rstrip("/"):
+            continue
+        node, card = anchor, None
+        for _ in range(5):
+            if node is None:
+                break
+            classes = " ".join(node.get("class", [])) if hasattr(node, "get") else ""
+            node_id = node.get("id", "") if hasattr(node, "get") else ""
+            if (node.name in ("article", "li") or node.has_attr("data-product")
+                    or node.has_attr("data-product-id")
+                    or re.search(r"product|item|card", classes + " " + node_id, re.I)):
+                card = node
+                break
+            node = node.parent
+        if card is None and not product_href.search(parsed_target.path):
+            continue
+        card = card or anchor.parent
+        card_text = re.sub(r"\s+", " ", card.get_text(" ", strip=True)).strip()
+        title = anchor.get_text(" ", strip=True)
+        if not title:
+            heading = card.select_one("h1, h2, h3, h4, [class*='title'], [class*='name']")
+            title = heading.get_text(" ", strip=True) if heading else ""
+        if not title or len(title) > 300:
+            continue
+        price_match, stock_match = price_re.search(card_text), stock_re.search(card_text)
+        results.append({
+            "title": title, "url": target,
+            "price": price_match.group(1) if price_match else "",
+            "currency": price_match.group(2).upper() if price_match else "",
+            "availability": stock_match.group(0) if stock_match else "",
+            "snippet": card_text[:500],
+        })
+        seen.add(target)
+        if len(results) >= 80:
+            break
+    return results
