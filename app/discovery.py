@@ -542,7 +542,7 @@ class PoliteCrawler:
             search_page = (request_method == "POST") or (
                 bool(re.search(r"/(?:search|szukaj|wyniki|catalogsearch)(?:/|$)", parsed_page.path, re.I))
                 or bool(set(parse_qs(parsed_page.query)) &
-                        {"q", "s", "search", "query", "text", "searchterm", "phrase"})
+                        {"q", "s", "search", "query", "text", "searchterm", "phrase", "term", "keyword", "search_query", "product", "products", "string"})
             )
             # One rendered-browser attempt per domain: use it only when static
             # HTML cannot expose the result cards or even the search control.
@@ -564,11 +564,7 @@ class PoliteCrawler:
                     page_soup = BeautifulSoup(html, "html.parser")
                     store_rows = extract_store_search_results(page_soup, final_url, query, force_search=True)
                     parsed_page = urlparse(final_url)
-                    search_page = True or (
-                        bool(re.search(r"/(?:search|szukaj|wyniki|catalogsearch)(?:/|$)", parsed_page.path, re.I))
-                        or bool(set(parse_qs(parsed_page.query)) &
-                                {"q", "s", "search", "query", "text", "searchterm", "phrase"})
-                    )
+                    search_page = True
             if search_page:
                 summary = extract_store_search_summary(page_soup)
                 total_count = summary["store_total_count"]
