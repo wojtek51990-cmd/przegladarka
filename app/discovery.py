@@ -23,6 +23,10 @@ from urllib.robotparser import RobotFileParser
 import requests
 from bs4 import BeautifulSoup
 
+from app.site_architecture import (
+    detect_site_architecture, platform_search_urls, extract_product_metadata,
+)
+
 USER_AGENT = "PrzegladarkaIndependentCrawler/0.5 (+public-web; respectful crawler)"
 HEADERS = {
     "User-Agent": USER_AGENT,
@@ -355,14 +359,16 @@ class PoliteCrawler:
 
     def extract(self, url, html, query):
         soup = BeautifulSoup(html, "html.parser")
+        architecture = detect_site_architecture(html, soup)
+        product_meta = extract_product_metadata(soup)
         jsonld_nodes = [node.string or node.get_text() for node in soup.select('script[type="application/ld+json"]')]
-        meta_product = bool(soup.select_one('meta[property="og:type"][content*="product" i]'))
+        meta_product = product_meta["is_product"]
         for tag in soup(["script", "style", "noscript", "svg"]):
             tag.decompose()
         title = (soup.title.get_text(" ", strip=True) if soup.title else "")[:300]
         text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
         snippet = text[:12000]
-        product_names = []
+        product_names = [product_meta["name"]] if product_meta["name"] else []
         json_product = False
         structured_price = ""
         structured_currency = ""
@@ -392,8 +398,8 @@ class PoliteCrawler:
                 elif isinstance(obj, list):
                     stack.extend(obj)
         price_match = PRICE_RE.search(text)
-        price = structured_price or (price_match.group(1) if price_match else "")
-        currency = structured_currency or (price_match.group(2).upper() if price_match else "")
+        price = structured_price or product_meta["price"] or (price_match.group(1) if price_match else "")
+        currency = structured_currency or product_meta["currency"] or (price_match.group(2).upper() if price_match else "")
         match_text = " ".join([title, " ".join(product_names), text[:12000]])
         relevance = product_match_score(query, match_text)
         commercial_text = text.lower()
@@ -418,6 +424,8 @@ class PoliteCrawler:
         )
         links = []
         self._last_search_form_links = set()
+        self._last_adapter_search_links = set()
+        self._last_site_architecture = architecture
         # Detect public GET search forms on each shop instead of guessing that
         # every retailer uses the same query parameter. This mirrors entering
         # the user's phrase into the shop's own search box.
@@ -475,6 +483,12 @@ class PoliteCrawler:
                 if search_url != url:
                     links.append((search_url, "internal shop search"))
                     self._last_search_form_links.add(search_url)
+        # Platform adapters are selected from page fingerprints, not domain names.
+        # They complement (never replace) a detected first-party GET search form.
+        for adapter_url in platform_search_urls(url, query, architecture):
+            if domain_of(adapter_url) == domain_of(url) and adapter_url != url:
+                links.append((adapter_url, "platform adapter search"))
+                self._last_adapter_search_links.add(adapter_url)
         for anchor in soup.select("a[href]"):
             target = normalize_url(urljoin(url, anchor.get("href", "")))
             if not target or target == url or domain_of(target) != domain_of(url):
@@ -497,7 +511,7 @@ class PoliteCrawler:
         ranked_links = sorted(
             unique.items(),
             key=lambda item: (
-                1 if item[1][0] == "internal shop search" else 0,
+                1 if item[1][0] in {"internal shop search", "platform adapter search"} else 0,
                 item[1][1] + (0.25 if any(term in urlparse(item[0]).path.lower() for term in PRODUCT_PATH_TERMS) else 0),
                 len(urlparse(item[0]).path),
             ),
@@ -583,7 +597,10 @@ class PoliteCrawler:
                 # the closest equivalent to a real user searching inside the shop.
                 search_links = [
                     link for link in links
-                    if link in getattr(self, "_last_search_form_links", set())
+                    if link in (
+                        getattr(self, "_last_search_form_links", set())
+                        | getattr(self, "_last_adapter_search_links", set())
+                    )
                 ]
                 for link in reversed(search_links):
                     if link not in seen and len(queue) < max_pages * 8:
