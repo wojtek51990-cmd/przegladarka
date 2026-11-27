@@ -146,16 +146,16 @@ def extract_store_search_results(soup, page_url: str, query: str) -> list[dict]:
         r"/(?:produkt|product|products|p|item)(?:/|[-_])", re.I
     )
     price_re = re.compile(
-        r"(?<!\\w)(\\d{1,3}(?:[ .]\\d{3})*(?:,\\d{2})?|\\d+(?:[,.]\\d{2})?)\\s?(zł|PLN|EUR|€|USD|\\$)", re.I)
+        r"(?<!\w)(\d{1,3}(?:[ .]\d{3})*(?:,\d{2})?|\d+(?:[,.]\d{2})?)\s?(zł|PLN|EUR|€|USD|\$)", re.I)
     stock_re = re.compile(
-        r"(dostępny(?:\\s+od\\s+ręki)?|dostepny(?:\\s+od\\s+reki)?|brak\\s+w\\s+magazynie|"
-        r"niedostępny|niedostepny|na\\s+zamówienie|na\\s+zamowienie|w\\s+magazynie|"
-        r"in\\s+stock|out\\s+of\\s+stock|available|unavailable)", re.I)
+        r"(dostępny(?:\s+od\s+ręki)?|dostepny(?:\s+od\s+reki)?|brak\s+w\s+magazynie|"
+        r"niedostępny|niedostepny|na\s+zamówienie|na\s+zamowienie|w\s+magazynie|"
+        r"in\s+stock|out\s+of\s+stock|available|unavailable)", re.I)
     count_patterns = (
-        re.compile(r"(?:znaleziono|wyszukano|wyników|wyniki|products found|results found)\\D{0,30}(\\d{1,6})", re.I),
-        re.compile(r"(\\d{1,6})\\s+(?:produktów|produkt|products|wyników|results)", re.I),
+        re.compile(r"(?:znaleziono|wyszukano|wyników|wyniki|products found|results found)\D{0,30}(\d{1,6})", re.I),
+        re.compile(r"(\d{1,6})\s+(?:produktów|produkt|products|wyników|results)", re.I),
     )
-    page_text = re.sub(r"\\s+", " ", soup.get_text(" ", strip=True))
+    page_text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
     total_count = None
     for pattern in count_patterns:
         match = pattern.search(page_text)
@@ -202,7 +202,7 @@ def extract_store_search_results(soup, page_url: str, query: str) -> list[dict]:
             title = heading.get_text(" ", strip=True) if heading else ""
         if not title or len(title) > 300:
             continue
-        card_text = re.sub(r"\\s+", " ", card.get_text(" ", strip=True)).strip()
+        card_text = re.sub(r"\s+", " ", card.get_text(" ", strip=True)).strip()
         price_match = price_re.search(card_text)
         stock_match = stock_re.search(card_text)
         rows.append({
