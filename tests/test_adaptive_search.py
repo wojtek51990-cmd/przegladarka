@@ -125,6 +125,7 @@ class AdaptiveSearchTests(unittest.TestCase):
             BeautifulSoup(payload, "html.parser"),
             "https://shop.example/module/search?q=DS18B20", "DS18B20",
         )
+        self.assertEqual(report["store_total_count"], 29)
         self.assertEqual(report["candidate_cards"], 2)
         self.assertEqual(report["returned_cards"], 1)
         self.assertEqual(report["cards"][0]["title"], "Czujnik temperatury DS18B20")
