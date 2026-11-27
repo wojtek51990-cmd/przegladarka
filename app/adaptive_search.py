@@ -231,12 +231,22 @@ def _card_evidence(node, anchor, sibling_repeats: int) -> tuple[int, list[str]]:
 
 
 def _extract_json_product_records(soup, page_url: str) -> list[dict]:
-    """Read explicit product objects from public embedded JSON application state."""
+    """Read products from embedded state or raw first-party JSON/AJAX responses."""
     rows, seen = [], set()
     scripts = soup.select(
         'script[type="application/ld+json"], script[type="application/json"], '
         'script#__NEXT_DATA__, script[id*="state" i], script[id*="data" i]'
     )
+    raw_payloads = []
+    for script in scripts:
+        raw = script.string or script.get_text()
+        if raw and len(raw) <= 2_000_000:
+            raw_payloads.append(raw)
+    # AJAX endpoints commonly return JSON as the whole response body.
+    body_text = soup.get_text(" ", strip=True)
+    if body_text and len(body_text) <= 2_000_000 and body_text.lstrip().startswith(("{", "[")):
+        raw_payloads.append(body_text.strip())
+
     def walk(value):
         if isinstance(value, dict):
             yield value
@@ -245,44 +255,72 @@ def _extract_json_product_records(soup, page_url: str) -> list[dict]:
         elif isinstance(value, list):
             for child in value:
                 yield from walk(child)
-    for script in scripts:
-        raw = script.string or script.get_text()
-        if not raw or len(raw) > 2_000_000:
-            continue
+        elif isinstance(value, str):
+            candidate = value.strip()
+            if candidate.startswith("<") and ("<a" in candidate.lower() or "<article" in candidate.lower()):
+                fragment = BeautifulSoup(candidate, "html.parser")
+                for row in extract_adaptive_result_cards(fragment, page_url):
+                    yield {"__parsed_card__": row}
+            elif candidate.startswith(("{", "[")) and len(candidate) <= 1_000_000:
+                try:
+                    yield from walk(json.loads(candidate))
+                except (ValueError, TypeError):
+                    pass
+
+    for raw in raw_payloads:
         try:
             payload = json.loads(raw)
         except (ValueError, TypeError):
             continue
         for obj in walk(payload):
-            name = obj.get("name") or obj.get("title") or obj.get("productName")
-            raw_url = obj.get("url") or obj.get("productUrl") or obj.get("link")
+            if "__parsed_card__" in obj:
+                row = obj["__parsed_card__"]
+                if row["url"] not in seen:
+                    rows.append(row)
+                    seen.add(row["url"])
+                continue
+            name = next((obj.get(key) for key in (
+                "name", "title", "productName", "product_name", "name_product",
+                "productTitle", "product_title", "label"
+            ) if isinstance(obj.get(key), str) and obj.get(key).strip()), None)
+            raw_url = next((obj.get(key) for key in (
+                "url", "productUrl", "product_url", "link", "href",
+                "canonicalUrl", "canonical_url", "permalink"
+            ) if isinstance(obj.get(key), str) and obj.get(key).strip()), None)
             if not isinstance(name, str) or not isinstance(raw_url, str):
                 continue
-            target = _same_origin_link(type("Link", (), {"get": lambda self, key, default=None: raw_url if key == "href" else default})(), page_url)
-            if not target or target in seen or len(name.strip()) < 3 or len(name) > 300:
+            target = urljoin(page_url, raw_url.strip())
+            parsed_target = urlparse(target)
+            if parsed_target.scheme not in {"http", "https"} or _origin(target) != _origin(page_url):
+                continue
+            target = urlunparse(parsed_target._replace(fragment=""))
+            if target in seen or len(name.strip()) < 3 or len(name) > 300:
                 continue
             types = obj.get("@type", [])
             types = [types] if isinstance(types, str) else types
-            has_product_identity = (
-                any("product" in str(item).lower() for item in types)
-                or any(key in obj for key in ("sku", "productId", "product_id", "variantId"))
-                or any(key in obj for key in ("price", "offers", "availability", "stock"))
+            identity_keys = (
+                "sku", "productId", "product_id", "variantId", "id_product",
+                "price", "final_price", "regular_price", "offers", "availability",
+                "stock", "quantity", "image", "images"
             )
-            if not has_product_identity:
+            if not (any("product" in str(item).lower() for item in types)
+                    or any(key in obj for key in identity_keys)):
                 continue
-            price_value = obj.get("price")
+            price_value = next((obj.get(key) for key in (
+                "price", "final_price", "finalPrice", "regular_price",
+                "regularPrice", "price_amount", "priceAmount"
+            ) if obj.get(key) is not None), None)
             currency = str(obj.get("priceCurrency") or obj.get("currency") or "")
             if isinstance(price_value, dict):
                 currency = currency or str(price_value.get("currency") or "")
                 price_value = price_value.get("value") or price_value.get("amount")
-            availability = obj.get("availability") or obj.get("stock") or ""
+            availability = obj.get("availability") or obj.get("stock") or obj.get("is_in_stock") or ""
             rows.append({
                 "title": name.strip(), "url": target,
                 "price": str(price_value) if price_value is not None else "",
-                "currency": currency.upper(),
-                "availability": str(availability),
-                "snippet": json.dumps(obj, ensure_ascii=False)[:500],
-                "card_confidence": 0.96, "card_evidence": ["embedded-product-json"],
+                "currency": currency.upper(), "availability": str(availability),
+                "snippet": json.dumps(obj, ensure_ascii=False, default=str)[:500],
+                "card_confidence": 0.96, "card_evidence": ["first-party-json-product"],
             })
             seen.add(target)
     return rows
