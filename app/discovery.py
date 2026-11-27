@@ -23,7 +23,7 @@ from urllib.robotparser import RobotFileParser
 import requests
 from bs4 import BeautifulSoup
 
-from app.adaptive_search import discover_search_requests, render_store_search_page
+from app.adaptive_search import discover_search_requests, render_store_search_page, has_dynamic_search_evidence
 from app.site_architecture import (
     detect_site_architecture, platform_search_urls, extract_product_metadata,
     extract_store_search_results, extract_store_search_summary,
@@ -486,7 +486,7 @@ class PoliteCrawler:
         ranked_links = sorted(
             unique.items(),
             key=lambda item: (
-                1 if item[1][0] in {"internal shop search", "platform adapter search"} else 0,
+                1 if item[1][0] in {"internal shop search", "internal adaptive shop search", "platform adapter search"} else 0,
                 item[1][1] + (0.25 if any(term in urlparse(item[0]).path.lower() for term in PRODUCT_PATH_TERMS) else 0),
                 len(urlparse(item[0]).path),
             ),
@@ -516,7 +516,7 @@ class PoliteCrawler:
             domain = domain_of(url)
             if not domain or domain_counts.get(domain, 0) >= per_domain:
                 continue
-            fetched = self.fetch(url, method=request_method, data=request_data)
+            fetched = self.fetch(url) if request_method == "GET" else self.fetch(url, method=request_method, data=request_data)
             if not fetched:
                 continue
             final_url, html, content_type = fetched
@@ -548,10 +548,7 @@ class PoliteCrawler:
             # HTML cannot expose the result cards or even the search control.
             needs_browser = (
                 not store_rows and domain not in browser_attempted
-                and (search_page or (
-                    not getattr(self, "_last_search_form_links", set())
-                    and not getattr(self, "_last_adaptive_search_requests", [])
-                ))
+                and (search_page or has_dynamic_search_evidence(page_soup))
             )
             if needs_browser:
                 browser_attempted.add(domain)
