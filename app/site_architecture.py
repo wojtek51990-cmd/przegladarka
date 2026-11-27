@@ -124,7 +124,7 @@ def extract_product_metadata(soup) -> dict:
     }
 
 
-def extract_store_search_summary(soup) -> dict:
+def extract_store_search_summary(soup, raw_response: str | None = None) -> dict:
     """Extract only an explicitly labelled store result count / empty state."""
     text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
     count_scopes = soup.select(
@@ -160,12 +160,36 @@ def extract_store_search_summary(soup) -> dict:
         r"brak wyników|brak produkt(?:u|ów)|no products found|no results)\b",
         text, re.I
     ))
+    if total is None and raw_response:
+        try:
+            payload = json.loads(raw_response)
+        except (ValueError, TypeError):
+            payload = None
+        def find_total(value):
+            if isinstance(value, dict):
+                for key in ("total", "total_count", "totalCount", "totalResults", "total_results", "products_count", "productsCount", "result_count", "resultCount"):
+                    candidate = value.get(key)
+                    if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate >= 0:
+                        return candidate
+                    if isinstance(candidate, str) and candidate.strip().isdigit():
+                        return int(candidate.strip())
+                for child in value.values():
+                    found = find_total(child)
+                    if found is not None:
+                        return found
+            elif isinstance(value, list):
+                for child in value:
+                    found = find_total(child)
+                    if found is not None:
+                        return found
+            return None
+        total = find_total(payload)
     if total == 0:
         no_results = True
     return {"store_total_count": total, "store_reported_no_results": no_results}
 
 
-def extract_store_search_results(soup, page_url: str, query: str, force_search: bool = False) -> list[dict]:
+def extract_store_search_results(soup, page_url: str, query: str, force_search: bool = False, raw_response: str | None = None) -> list[dict]:
     """Compatibility adapter: use the platform-independent adaptive DOM engine."""
     from app.adaptive_search import inspect_search_page
 
@@ -179,7 +203,7 @@ def extract_store_search_results(soup, page_url: str, query: str, force_search: 
     if not (force_search or search_path or has_search_param):
         return []
 
-    report = inspect_search_page(soup, page_url, query)
+    report = inspect_search_page(soup, page_url, query, raw_response=raw_response)
     legacy_summary = extract_store_search_summary(soup)
     total_count = report["store_total_count"]
     if total_count is None:
