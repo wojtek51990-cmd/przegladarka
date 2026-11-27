@@ -111,6 +111,50 @@ class AdaptiveSearchTests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["store_returned_cards"], 2)
 
+    def test_reads_raw_first_party_json_product_response(self):
+        payload = """{
+          "total": 29,
+          "products": [
+            {"product_id": 101, "product_name": "Czujnik temperatury DS18B20",
+             "product_url": "/czujnik-ds18b20", "final_price": "12.50", "currency": "PLN"},
+            {"product_id": 102, "product_name": "Moduł przekaźnika 12V",
+             "product_url": "/modul-przekaznika", "final_price": "8.90", "currency": "PLN"}
+          ]
+        }"""
+        report = inspect_search_page(
+            BeautifulSoup(payload, "html.parser"),
+            "https://shop.example/module/search?q=DS18B20", "DS18B20",
+        )
+        self.assertEqual(report["candidate_cards"], 2)
+        self.assertEqual(report["returned_cards"], 1)
+        self.assertEqual(report["cards"][0]["title"], "Czujnik temperatury DS18B20")
+        self.assertEqual(report["cards"][0]["price"], "12.50")
+        self.assertEqual(report["cards"][0]["url"], "https://shop.example/czujnik-ds18b20")
+
+    def test_reads_html_result_fragment_wrapped_in_json(self):
+        import json
+        payload = {"html": '<div class="tile-a"><a href="/item/1"><h3>DS18B20 czujnik</h3></a>'
+                            '<b>15,00 zł</b></div>'
+                            '<div class="tile-a"><a href="/item/2"><h3>DS18B20 sonda</h3></a>'
+                            '<b>18,00 zł</b></div>'}
+        report = inspect_search_page(
+            BeautifulSoup(json.dumps(payload), "html.parser"),
+            "https://shop.example/ajax/search", "DS18B20",
+        )
+        self.assertEqual(report["returned_cards"], 2)
+        self.assertEqual([row["price"] for row in report["cards"]], ["15,00", "18,00"])
+
+    def test_raw_json_rejects_external_product_links(self):
+        payload = """{"products":[
+          {"product_id":1,"product_name":"DS18B20 czujnik",
+           "product_url":"https://other.example/item/1","price":"10.00"}
+        ]}"""
+        report = inspect_search_page(
+            BeautifulSoup(payload, "html.parser"),
+            "https://shop.example/search?q=DS18B20", "DS18B20",
+        )
+        self.assertEqual(report["returned_cards"], 0)
+
     def test_search_page_report_separates_store_count_from_cards_read(self):
         html = """<html><body><p class="results-count">37 produktów</p>
           <div class="item-x"><a href="/sku/1"><h3>Produkt pierwszy</h3></a><b>10,00 zł</b></div>
