@@ -152,6 +152,7 @@ def extract_store_search_results(soup, page_url: str, query: str) -> list[dict]:
         r"niedostępny|niedostepny|na\s+zamówienie|na\s+zamowienie|w\s+magazynie|"
         r"in\s+stock|out\s+of\s+stock|available|unavailable)", re.I)
     count_patterns = (
+        re.compile(r"\b\d+\s*[-–]\s*\d+\s+(?:z|of)\s+(\d{1,6})\b", re.I),
         re.compile(r"(?:znaleziono|wyszukano|wyników|wyniki|products found|results found)\D{0,30}(\d{1,6})", re.I),
         re.compile(r"(\d{1,6})\s+(?:produktów|produkt|products|wyników|results)", re.I),
     )
