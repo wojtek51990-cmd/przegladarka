@@ -376,24 +376,23 @@ class MainWindow(QMainWindow):
             self.status.setText("Wyniki sklepów (robot tylko odczytuje): " + "; ".join(summaries[:8]))
         elif results:
             self.status.setText("Odczytano karty produktów zwrócone przez wyszukiwarki sklepów; sklepy nie podały łącznej liczby wyników.")
-        if errors and not results:
+        if errors and not results and not reports:
             self.status.setText("Brak wyników odczytanych z wyszukiwarek sprawdzonych sklepów. To nie dowodzi, że produktu nie ma w tych sklepach.")
             QMessageBox.warning(
                 self, "Problem z wyszukiwaniem",
                 "Nie udało się pobrać wyników:\n\n" + "\n".join(errors[:6]) +
                 "\n\nDodaj adresy sklepów w zakładce Odkrywanie ofert, aby rozszerzyć indeks."
             )
-        elif errors:
-            if not reports:
-                self.status.setText(
-                    f"Pokazuję dostępne wyniki. Niedostępne źródła: {len(errors)}. "
-                    "Szczegóły w diagnostyce."
-                )
-        elif results:
+        elif errors and not reports:
+            self.status.setText(
+                f"Pokazuję dostępne wyniki. Niedostępne źródła: {len(errors)}. "
+                "Szczegóły w diagnostyce."
+            )
+        elif results and not reports:
             self.status.setText(
                 "Wyniki pochodzą z wyszukiwarek poszczególnych sklepów; robot tylko odczytuje ich odpowiedzi."
             )
-        else:
+        elif not reports:
             self.status.setText("Brak wyników dla tego zapytania.")
 
     def run_discovery(self):
