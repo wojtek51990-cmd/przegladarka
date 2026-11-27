@@ -96,6 +96,23 @@ class DiscoveryTests(unittest.TestCase):
                     crawler.crawl("krem nivea soft", ["https://shop.example/"])
             self.assertEqual(fetch.call_count, 1)
 
+    def test_crawler_does_not_invent_results_from_product_pages_outside_store_search(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            crawler = PoliteCrawler(SourceDB(Path(tmp) / "db.sqlite3"), max_pages=5, pages_per_domain=5)
+            home = """<html><head><title>Sklep</title></head><body>
+              <a href="/produkt/czujnik-ds18b20">Czujnik DS18B20</a></body></html>"""
+            product = """<html><head><title>Czujnik DS18B20</title>
+              <meta property="og:type" content="product"></head>
+              <body><p>DS18B20 cena 12,50 zł</p></body></html>"""
+            def fake_fetch(url):
+                if url.endswith("/"):
+                    return url, home, "text/html"
+                return url, product, "text/html"
+            with patch.object(crawler, "fetch", side_effect=fake_fetch):
+                with patch.object(crawler, "sitemap_urls", return_value=[]):
+                    results = crawler.crawl("DS18B20", ["https://shop.example/"])
+            self.assertEqual(results, [])
+
     def test_page_with_adult_content_is_not_saved_as_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = SourceDB(Path(tmp) / "db.sqlite3")
