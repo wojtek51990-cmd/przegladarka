@@ -591,6 +591,15 @@ class PoliteCrawler:
                 page_text = re.sub(r"\\s+", " ", page_soup.get_text(" ", strip=True))
                 total_count = next((row.get("store_total_count") for row in store_rows
                                     if row.get("store_total_count") is not None), None)
+                if total_count is None:
+                    for count_pattern in (
+                        r"(?:znaleziono|wyszukano|wyników|wyniki|products found|results found)\\D{0,30}(\\d{1,6})",
+                        r"(\\d{1,6})\\s+(?:produktów|produkt|products|wyników|results)",
+                    ):
+                        count_match = re.search(count_pattern, page_text, re.I)
+                        if count_match:
+                            total_count = int(count_match.group(1))
+                            break
                 no_results = bool(re.search(
                     r"(nie znaleziono (?:żadnych )?(?:produktów|wyników)|brak wyników|no products found|no results)",
                     page_text, re.I))
