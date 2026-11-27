@@ -23,6 +23,7 @@ from urllib.robotparser import RobotFileParser
 import requests
 from bs4 import BeautifulSoup
 
+from app.adaptive_search import discover_search_requests
 from app.site_architecture import (
     detect_site_architecture, platform_search_urls, extract_product_metadata,
     extract_store_search_results, extract_store_search_summary,
@@ -291,7 +292,7 @@ class PoliteCrawler:
         parser = self.robots[origin]
         return bool(parser and parser.can_fetch(USER_AGENT, url))
 
-    def fetch(self, url):
+    def fetch(self, url, method="GET", data=None):
         host = domain_of(url)
         if host not in self.host_public:
             self.host_public[host] = is_public_host(host)
@@ -305,7 +306,7 @@ class PoliteCrawler:
         if not self.allowed(url):
             return None
         try:
-            response = self.session.get(url, timeout=TIMEOUT, stream=True, allow_redirects=False)
+            response = self.session.request(method, url, data=data, timeout=TIMEOUT, stream=True, allow_redirects=False)
             if 300 <= response.status_code < 400:
                 target = normalize_url(urljoin(url, response.headers.get("Location", "")))
                 if not target or domain_of(target) != host or not self.allowed(target):
@@ -433,76 +434,30 @@ class PoliteCrawler:
         self._last_search_form_links = set()
         self._last_adapter_search_links = set()
         self._last_site_architecture = architecture
-        # Detect public GET search forms on each shop instead of guessing that
-        # every retailer uses the same query parameter. This mirrors entering
-        # the user's phrase into the shop's own search box.
+        # Discover first-party search forms from their controls and labels.
+        # This is platform-independent; platform adapters are only an optional fallback.
         current = urlparse(url)
-        already_searching = bool(current.query) or any(
-            marker in current.path.lower() for marker in ("/szukaj", "/search", "/wyniki")
+        from urllib.parse import parse_qs
+        current_params = {key.lower() for key in parse_qs(current.query)}
+        already_searching = bool(
+            re.search(r"/(?:search|szukaj|wyniki|catalogsearch)(?:/|$)", current.path, re.I)
+            or current_params.intersection({"q", "query", "search", "s", "term", "keyword", "phrase", "text"})
         )
+        self._last_search_form_links = set()
+        self._last_adaptive_search_requests = []
         if not already_searching:
-            for form in soup.select("form"):
-                method = (form.get("method") or "get").strip().lower()
-                if method != "get":
-                    continue
-                action = normalize_url(urljoin(url, form.get("action") or url))
-                if not action or domain_of(action) != domain_of(url):
-                    continue
-                # Reject embedded Google Custom Search forms even when the
-                # shop proxies them through a same-host endpoint.
-                form_blob = " ".join([
-                    str(form.get("class", "")), str(form.get("id", "")),
-                    str(form.get("action", "")),
-                    " ".join((field.get("name", "") + " " + field.get("value", ""))
-                             for field in form.select("input"))
-                ]).lower()
-                if ("google" in form_blob or "gcse" in form_blob
-                        or "sitesearch" in form_blob
-                        or re.search(r"client\s*=\s*pub-", form_blob)
-                        or urlparse(action).path.lower().endswith("links2.php")):
-                    continue
-                search_field = None
-                for field in form.select("input[name], textarea[name]"):
-                    name = (field.get("name") or "").strip()
-                    kind = (field.get("type") or "").lower()
-                    if kind == "hidden":
-                        continue
-                    if kind == "search" or name.lower() in {
-                        "q", "query", "search", "s", "term", "keyword",
-                        "phrase", "text", "searchterm", "search_query",
-                    }:
-                        search_field = name
-                        break
-                if not search_field:
-                    continue
-                params = {}
-                for field in form.select("input[name]"):
-                    name = (field.get("name") or "").strip()
-                    kind = (field.get("type") or "").lower()
-                    if not name or kind in {"submit", "button", "file", "password"}:
-                        continue
-                    if kind == "hidden" and any(
-                        secret in name.lower() for secret in ("token", "csrf", "auth", "session")
-                    ):
-                        continue
-                    value = field.get("value", "")
-                    if kind in {"checkbox", "radio"} and not field.has_attr("checked"):
-                        continue
-                    params[name] = query if name == search_field else value
-                for field in form.select("textarea[name]"):
-                    if field.get("name") == search_field:
-                        params[search_field] = query
-                if search_field not in params:
-                    params[search_field] = query
-                search_url = action
-                from urllib.parse import parse_qsl, urlunparse
-                parsed_action = urlparse(action)
-                merged_params = dict(parse_qsl(parsed_action.query, keep_blank_values=True))
-                merged_params.update(params)
-                search_url = urlunparse(parsed_action._replace(query=urlencode(merged_params, doseq=True)))
-                if search_url != url:
-                    links.append((search_url, "internal shop search"))
-                    self._last_search_form_links.add(search_url)
+            for request in discover_search_requests(soup, url):
+                if request.method == "GET":
+                    from urllib.parse import parse_qsl, urlunparse
+                    parsed_action = urlparse(request.url)
+                    params = dict(parse_qsl(parsed_action.query, keep_blank_values=True))
+                    params.update(request.payload(query))
+                    search_url = urlunparse(parsed_action._replace(query=urlencode(params, doseq=True)))
+                    if search_url != url:
+                        links.append((search_url, "internal adaptive shop search"))
+                        self._last_search_form_links.add(search_url)
+                else:
+                    self._last_adaptive_search_requests.append(request)
         # Platform adapters are selected from page fingerprints, not domain names.
         # They complement (never replace) a detected first-party GET search form.
         for adapter_url in platform_search_urls(url, query, architecture):
@@ -547,19 +502,20 @@ class PoliteCrawler:
         for raw in seed_urls:
             seed = normalize_url(raw)
             if seed:
-                queue.append(seed)
+                queue.append((seed, "GET", None))
         domain_counts = {}
         results = []
         store_result_urls = set()
         while queue and len(seen) < max_pages:
-            url = queue.popleft()
-            if url in seen:
+            url, request_method, request_data = queue.popleft()
+            request_key = (url, request_method, tuple(sorted((request_data or {}).items())))
+            if request_key in seen:
                 continue
-            seen.add(url)
+            seen.add(request_key)
             domain = domain_of(url)
             if not domain or domain_counts.get(domain, 0) >= per_domain:
                 continue
-            fetched = self.fetch(url)
+            fetched = self.fetch(url, method=request_method, data=request_data)
             if not fetched:
                 continue
             final_url, html, content_type = fetched
@@ -569,7 +525,7 @@ class PoliteCrawler:
                     for node in root.findall(".//{*}loc"):
                         target = normalize_url(node.text or "")
                         if target and domain_of(target) == domain and target not in seen:
-                            queue.append(target)
+                            queue.append((target, "GET", None))
                 except ET.ParseError:
                     pass
                 continue
@@ -625,38 +581,27 @@ class PoliteCrawler:
                 for sitemap_url in reversed(self.sitemap_urls(final_url, cap=60 if deep else 30)):
                     if sitemap_url not in seen:
                         queue.appendleft(sitemap_url)
-            # A first-party search results page is the most valuable entry point:
-            # visit its matching product detail links before generic seed/sitemap
-            # URLs, otherwise the global page budget can be consumed first.
-            path_lower = urlparse(final_url).path.lower()
-            if domain == "rossmann.pl" and path_lower.startswith("/szukaj"):
-                priority_links = [
-                    link for link in links
-                    if "/produkt/" in urlparse(link).path.lower()
-                ]
-                for link in reversed(priority_links):
-                    if link not in seen and len(queue) < max_pages * 8:
-                        queue.appendleft(link)
-                priority_set = set(priority_links)
-                for link in links:
-                    if link not in priority_set and link not in seen and len(queue) < max_pages * 8:
-                        queue.append(link)
-            else:
-                # Visit a detected first-party search form immediately. It is
-                # the closest equivalent to a real user searching inside the shop.
-                search_links = [
-                    link for link in links
-                    if link in (
-                        getattr(self, "_last_search_form_links", set())
-                        | getattr(self, "_last_adapter_search_links", set())
-                    )
-                ]
-                for link in reversed(search_links):
-                    if link not in seen and len(queue) < max_pages * 8:
-                        queue.appendleft(link)
-                for link in links:
-                    if link not in search_links and link not in seen and len(queue) < max_pages * 8:
-                        queue.append(link)
+            # Search forms discovered on this page take priority over generic links.
+            # POST is executed only for a positively identified same-origin search form.
+            for request in reversed(getattr(self, "_last_adaptive_search_requests", [])):
+                payload = request.payload(query)
+                request_item = (request.url, request.method, payload)
+                request_key = (request.url, request.method, tuple(sorted(payload.items())))
+                if request_key not in seen and len(queue) < max_pages * 8:
+                    queue.appendleft(request_item)
+            search_links = [
+                link for link in links
+                if link in (
+                    getattr(self, "_last_search_form_links", set())
+                    | getattr(self, "_last_adapter_search_links", set())
+                )
+            ]
+            for link in reversed(search_links):
+                if link not in seen and len(queue) < max_pages * 8:
+                    queue.appendleft((link, "GET", None))
+            for link in links:
+                if link not in search_links and link not in seen and len(queue) < max_pages * 8:
+                    queue.append((link, "GET", None))
         return results
 
 
