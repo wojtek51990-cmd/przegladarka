@@ -618,8 +618,21 @@ class PoliteCrawler:
             for link in reversed(search_links):
                 if link not in seen and len(queue) < max_pages * 8:
                     queue.appendleft((link, "GET", None))
+            # On any first-party result page, visit product-like detail links
+            # before generic category/navigation links. This is path evidence,
+            # not a store-specific adapter; cards themselves remain authoritative.
+            product_links = []
+            if search_page:
+                product_links = [
+                    link for link in links
+                    if any(marker in urlparse(link).path.lower() for marker in PRODUCT_PATH_TERMS)
+                ]
+                for link in reversed(product_links):
+                    if link not in seen and len(queue) < max_pages * 8:
+                        queue.appendleft((link, "GET", None))
+            priority_set = set(search_links) | set(product_links)
             for link in links:
-                if link not in search_links and link not in seen and len(queue) < max_pages * 8:
+                if link not in priority_set and link not in seen and len(queue) < max_pages * 8:
                     queue.append((link, "GET", None))
         return results
 
