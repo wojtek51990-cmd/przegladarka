@@ -436,6 +436,39 @@ def inspect_search_page(soup, page_url: str, query: str = "") -> dict:
         if match:
             count = int(match.group(1))
             break
+    # Raw AJAX JSON often carries the authoritative total in its own payload
+    # rather than in a rendered "results-count" element.
+    if count is None:
+        raw_body = soup.get_text(" ", strip=True)
+        if raw_body and len(raw_body) <= 2_000_000 and raw_body.lstrip().startswith(("{", "[")):
+            try:
+                payload = json.loads(raw_body)
+            except (ValueError, TypeError):
+                payload = None
+
+            def find_total(value):
+                if isinstance(value, dict):
+                    for key in ("total", "total_count", "totalCount", "totalResults",
+                                "total_results", "products_count", "productsCount",
+                                "result_count", "resultCount"):
+                        candidate = value.get(key)
+                        if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate >= 0:
+                            return candidate
+                        if isinstance(candidate, str) and candidate.strip().isdigit():
+                            return int(candidate.strip())
+                    for child in value.values():
+                        found = find_total(child)
+                        if found is not None:
+                            return found
+                elif isinstance(value, list):
+                    for child in value:
+                        found = find_total(child)
+                        if found is not None:
+                            return found
+                return None
+
+            count = find_total(payload)
+
     return {
         "cards": cards, "returned_cards": len(cards), "candidate_cards": len(raw_cards),
         "rejected_nonmatching_cards": len(raw_cards) - len(cards),
