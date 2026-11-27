@@ -309,3 +309,72 @@ def inspect_search_page(soup, page_url: str, query: str = "") -> dict:
         "store_reported_no_results": empty or count == 0,
         "has_product_evidence": bool(cards),
     }
+
+
+
+def render_store_search_page(url: str, query: str, timeout_ms: int = 15000) -> tuple[str, str] | None:
+    """Optional embedded Chromium fallback for JavaScript-driven shop search.
+
+    Requires Playwright plus its Chromium runtime. It does not solve CAPTCHAs,
+    log in, evade bot checks, or navigate to another origin.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return None
+
+    original_origin = _origin(url)
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(
+                locale="pl-PL",
+                user_agent="PrzegladarkaIndependentCrawler/0.6 (+public-web; respectful crawler)",
+            )
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            page.wait_for_timeout(500)
+            # If this is already a search URL, render the returned result state.
+            parsed = urlparse(page.url)
+            already_search = bool(
+                re.search(r"/(?:search|szukaj|wyniki|catalogsearch)(?:/|$)", parsed.path, re.I)
+                or any(k.lower() in {"q", "query", "search", "s", "term", "text"}
+                       for k, _ in parse_qsl(parsed.query))
+            )
+            if not already_search:
+                selectors = (
+                    'input[type="search"]:visible',
+                    'input[name="q"]:visible',
+                    'input[name="query"]:visible',
+                    'input[name*="search" i]:visible',
+                    'input[placeholder*="szukaj" i]:visible',
+                    'input[aria-label*="search" i]:visible',
+                )
+                search_box = None
+                for selector in selectors:
+                    locator = page.locator(selector).first
+                    if locator.count():
+                        search_box = locator
+                        break
+                if search_box is not None:
+                    search_box.fill(query, timeout=3000)
+                    search_box.press("Enter", timeout=3000)
+                    try:
+                        page.wait_for_load_state("domcontentloaded", timeout=5000)
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(1200)
+            if _origin(page.url) != original_origin:
+                browser.close()
+                return None
+            body_text = page.locator("body").inner_text(timeout=3000)[:4000].lower()
+            if any(marker in body_text for marker in (
+                "captcha", "verify you are human", "access denied",
+                "robot check", "zabezpieczenie antybotowe",
+            )):
+                browser.close()
+                return None
+            result = (page.url, page.content())
+            browser.close()
+            return result
+    except Exception:
+        return None
