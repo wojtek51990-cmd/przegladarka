@@ -33,7 +33,11 @@ class AuditedCrawler(PoliteCrawler):
         result = super().extract(url, html, query)
         for search_url in getattr(self, "_last_search_form_links", set()):
             if search_url not in self.detected_searches:
-                self.detected_searches.append(search_url)
+                self.detected_searches.append("GET " + search_url)
+        for request in getattr(self, "_last_adaptive_search_requests", []):
+            label = request.method + " " + request.url
+            if label not in self.detected_searches:
+                self.detected_searches.append(label)
         return result
 
 
@@ -116,7 +120,9 @@ def main():
     if tested < 3:
         raise SystemExit("FAIL: fewer than three retail domains were tested")
     if total_searches == 0:
-        raise SystemExit("FAIL: no first-party GET search form was auto-detected")
+        raise SystemExit("FAIL: no first-party GET/POST search form was auto-detected")
+    if total_returned_cards == 0:
+        raise SystemExit("FAIL: no real product card was read from any live shop search result.")
 
 
 if __name__ == "__main__":
