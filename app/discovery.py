@@ -548,7 +548,7 @@ class PoliteCrawler:
             # HTML cannot expose the result cards or even the search control.
             needs_browser = (
                 not store_rows and domain not in browser_attempted
-                and (search_page or has_dynamic_search_evidence(page_soup))
+                and has_dynamic_search_evidence(page_soup)
             )
             if needs_browser:
                 browser_attempted.add(domain)
