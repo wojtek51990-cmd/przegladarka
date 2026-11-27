@@ -123,7 +123,7 @@ class AdaptiveSearchTests(unittest.TestCase):
         }"""
         report = inspect_search_page(
             BeautifulSoup(payload, "html.parser"),
-            "https://shop.example/module/search?q=DS18B20", "DS18B20",
+            "https://shop.example/module/search?q=DS18B20", "DS18B20", raw_response=payload,
         )
         self.assertEqual(report["store_total_count"], 29)
         self.assertEqual(report["candidate_cards"], 2)
@@ -140,7 +140,7 @@ class AdaptiveSearchTests(unittest.TestCase):
                             '<b>18,00 zł</b></div>'}
         report = inspect_search_page(
             BeautifulSoup(json.dumps(payload), "html.parser"),
-            "https://shop.example/ajax/search", "DS18B20",
+            "https://shop.example/ajax/search", "DS18B20", raw_response=json.dumps(payload),
         )
         self.assertEqual(report["returned_cards"], 2)
         self.assertEqual([row["price"] for row in report["cards"]], ["15,00", "18,00"])
@@ -152,7 +152,7 @@ class AdaptiveSearchTests(unittest.TestCase):
         ]}"""
         report = inspect_search_page(
             BeautifulSoup(payload, "html.parser"),
-            "https://shop.example/search?q=DS18B20", "DS18B20",
+            "https://shop.example/search?q=DS18B20", "DS18B20", raw_response=payload,
         )
         self.assertEqual(report["returned_cards"], 0)
 
