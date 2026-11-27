@@ -175,7 +175,7 @@ def extract_store_search_results(soup, page_url: str, query: str, force_search: 
         r"/(?:search|szukaj|wyniki|catalogsearch)(?:/|$)", parsed.path, re.I
     ))
     has_search_param = any(key in params for key in
-                           ("q", "s", "search", "query", "text", "searchterm", "phrase"))
+                           ("q", "s", "search", "query", "text", "searchterm", "phrase", "term", "keyword", "search_query", "product", "products", "string"))
     if not (force_search or search_path or has_search_param):
         return []
 
