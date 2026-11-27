@@ -7,6 +7,9 @@ from app.discovery import (
     SourceDB, expand_queries, normalize_url, domain_of, PoliteCrawler,
     product_match_score, is_adult_content, site_search_urls,
 )
+from app.site_architecture import (
+    detect_site_architecture, platform_search_urls, extract_product_metadata,
+)
 
 
 class DiscoveryTests(unittest.TestCase):
@@ -186,6 +189,59 @@ class DiscoveryTests(unittest.TestCase):
             self.assertTrue(offer[0])
             self.assertEqual(offer[1], "7,29")
             self.assertEqual(score, 1.0)
+
+
+    def test_platform_fingerprints_select_different_store_architectures(self):
+        cases = [
+            ("<script src='/wp-content/plugins/woocommerce/assets/app.js'></script>", "woocommerce"),
+            ("<meta name='generator' content='PrestaShop'><script src='/modules/x/views/a.js'></script>", "prestashop"),
+            ("<script>requirejs.config({}); var mage = true;</script><div class='catalogsearch'></div>", "magento"),
+            ("<script src='https://cdn.shopify.com/shop.js'></script>", "shopify"),
+            ("<a href='index.php?route=product/search'>Szukaj</a>", "opencart"),
+        ]
+        for html, expected in cases:
+            with self.subTest(expected=expected):
+                architecture = detect_site_architecture(html)
+                self.assertEqual(architecture["platform"], expected)
+                self.assertGreater(architecture["confidence"], 0)
+
+    def test_platform_adapters_generate_first_party_search_urls(self):
+        origin = "https://shop.example/"
+        cases = {
+            "woocommerce": "/?s=czujnik+DS18B20&post_type=product",
+            "magento": "/catalogsearch/result/?q=czujnik+DS18B20",
+            "shopify": "/search?q=czujnik+DS18B20",
+            "opencart": "/index.php?route=product%2Fsearch&search=czujnik+DS18B20",
+        }
+        for platform, expected_path in cases.items():
+            with self.subTest(platform=platform):
+                urls = platform_search_urls(
+                    origin, "czujnik DS18B20",
+                    {"platform": platform, "confidence": 0.8},
+                )
+                self.assertEqual(len(urls), 1)
+                self.assertEqual(urls[0], origin.rstrip("/") + expected_path)
+
+    def test_unknown_architecture_does_not_guess_search_route(self):
+        self.assertEqual(
+            platform_search_urls("https://shop.example/", "produkt",
+                                 {"platform": "custom_or_unknown"}),
+            [],
+        )
+
+    def test_product_metadata_reads_opengraph_and_microdata(self):
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup("""<html><head>
+          <meta property="og:type" content="product">
+          <meta property="og:title" content="Czujnik DS18B20">
+          <meta property="product:price:amount" content="12.50">
+          <meta property="product:price:currency" content="PLN">
+        </head><body></body></html>""", "html.parser")
+        data = extract_product_metadata(soup)
+        self.assertTrue(data["is_product"])
+        self.assertEqual(data["name"], "Czujnik DS18B20")
+        self.assertEqual(data["price"], "12.50")
+        self.assertEqual(data["currency"], "PLN")
 
 
 if __name__ == "__main__":
