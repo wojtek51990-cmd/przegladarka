@@ -151,7 +151,7 @@ def extract_store_search_results(soup, page_url: str, query: str) -> list[dict]:
             continue
         if target in seen or target.rstrip("/") == page_url.rstrip("/"):
             continue
-        node, card = anchor, None
+        node, card = anchor.parent, None
         for _ in range(5):
             if node is None:
                 break
