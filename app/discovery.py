@@ -593,6 +593,7 @@ class PoliteCrawler:
                                     if row.get("store_total_count") is not None), None)
                 if total_count is None:
                     for count_pattern in (
+                        r"\b\d+\s*[-–]\s*\d+\s+(?:z|of)\s+(\d{1,6})\b",
                         r"(?:znaleziono|wyszukano|wyników|wyniki|products found|results found)\D{0,30}(\d{1,6})",
                         r"(\d{1,6})\s+(?:produktów|produkt|products|wyników|results)",
                     ):
