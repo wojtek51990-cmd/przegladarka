@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+
+from bs4 import BeautifulSoup
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
