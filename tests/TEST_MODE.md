@@ -1,0 +1,1 @@
+GitHub Actions for this development branch runs automated and live regression tests only. It deliberately does not build an EXE or installer, so developers do not need to reinstall the application for each test iteration.
