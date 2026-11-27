@@ -1,0 +1,311 @@
+"""Adaptive first-party shop search engine.
+
+The engine does not depend on shop names, platform fingerprints, URL conventions,
+or CSS class names. It discovers public search controls and infers product cards
+from repeated DOM structure plus product-specific evidence.
+
+Safety: same-origin search forms only; no credentials, checkout/account forms,
+CAPTCHA bypass, private APIs, or external search engines. POST is supported only
+for forms positively identified as search forms.
+"""
+from __future__ import annotations
+
+import json
+import re
+from collections import Counter
+from dataclasses import dataclass
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
+
+
+SEARCH_WORDS = re.compile(
+    r"(search|szukaj|wyszuk|query|keyword|phrase|product|produkt|catalog|katalog)",
+    re.I,
+)
+SENSITIVE = re.compile(r"(csrf|nonce|token|auth|password|passwd|session|cookie|login|account)", re.I)
+PRICE_WORDS = re.compile(r"(price|cena|cost|amount|regular-price|special-price|sale-price)", re.I)
+STOCK_WORDS = re.compile(r"(stock|availability|available|dostep|dostęp|inventory)", re.I)
+CARD_WORDS = re.compile(r"(product|produkt|item|tile|card|result|listing|offer|towar)", re.I)
+PRICE_RE = re.compile(
+    r"(?<![\w])([0-9][0-9 .]*(?:,[0-9]{2}|\.[0-9]{2})?)\s*(zł|PLN|EUR|€|USD|\$)",
+    re.I,
+)
+STOCK_RE = re.compile(
+    r"(dostępny(?:\s+od\s+ręki)?|dostepny(?:\s+od\s+reki)?|"
+    r"brak\s+w\s+magazynie|niedostępny|niedostepny|na\s+zamówienie|"
+    r"na\s+zamowienie|w\s+magazynie|in\s+stock|out\s+of\s+stock|"
+    r"available|unavailable)",
+    re.I,
+)
+SEARCH_NAMES = {
+    "q", "query", "search", "s", "term", "keyword", "phrase", "text",
+    "searchterm", "search_query", "product", "products", "string",
+}
+
+
+@dataclass(frozen=True)
+class SearchRequest:
+    method: str
+    url: str
+    data: tuple[tuple[str, str], ...]
+    field: str
+    confidence: float
+    evidence: tuple[str, ...]
+
+    def payload(self, query: str) -> dict[str, str]:
+        result = dict(self.data)
+        result[self.field] = query
+        return result
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parsed = urlparse(url)
+    return parsed.scheme.lower(), (parsed.hostname or "").lower(), parsed.port
+
+
+def _is_search_form(form) -> tuple[str, float, list[str]]:
+    evidence: list[str] = []
+    candidates = []
+    for field in form.select("input[name], textarea[name]"):
+        name = (field.get("name") or "").strip()
+        kind = (field.get("type") or "text").lower()
+        if not name or kind in {"hidden", "password", "file", "submit", "button"}:
+            continue
+        label_text = ""
+        field_id = field.get("id")
+        if field_id:
+            label = form.find("label", attrs={"for": field_id})
+            if label:
+                label_text = label.get_text(" ", strip=True)
+        blob = " ".join((name, kind, field.get("placeholder", ""),
+                         field.get("aria-label", ""), label_text))
+        score = 0
+        if kind == "search":
+            score += 5
+            evidence.append("input[type=search]")
+        if name.lower() in SEARCH_NAMES:
+            score += 4
+            evidence.append("rozpoznana nazwa pola")
+        if SEARCH_WORDS.search(blob):
+            score += 2
+            evidence.append("etykieta/pole wskazuje wyszukiwanie")
+        if score:
+            candidates.append((score, name))
+    if not candidates:
+        return "", 0.0, []
+    candidates.sort(reverse=True)
+    score, field_name = candidates[0]
+    confidence = min(0.99, 0.55 + score * 0.07)
+    return field_name, confidence, list(dict.fromkeys(evidence))
+
+
+def discover_search_requests(html_soup, page_url: str) -> list[SearchRequest]:
+    """Discover same-origin public GET/POST search forms without platform rules."""
+    requests: list[SearchRequest] = []
+    base_origin = _origin(page_url)
+    for form in html_soup.select("form"):
+        method = (form.get("method") or "get").strip().lower()
+        if method not in {"get", "post"}:
+            continue
+        action = urljoin(page_url, form.get("action") or page_url)
+        parsed = urlparse(action)
+        if parsed.scheme not in {"http", "https"} or _origin(action) != base_origin:
+            continue
+        form_blob = " ".join([
+            str(form.get("id", "")), " ".join(form.get("class", [])),
+            str(form.get("action", "")),
+            form.get_text(" ", strip=True)[:500],
+        ]).lower()
+        if re.search(r"(google|gcse|sitesearch|captcha|checkout|koszyk|login|logowanie)", form_blob):
+            continue
+        field, confidence, evidence = _is_search_form(form)
+        if not field:
+            continue
+        payload: list[tuple[str, str]] = []
+        for control in form.select("input[name], textarea[name], select[name]"):
+            name = (control.get("name") or "").strip()
+            kind = (control.get("type") or "").lower()
+            if not name or SENSITIVE.search(name) or kind in {"password", "file", "submit", "button", "image"}:
+                continue
+            if kind in {"checkbox", "radio"} and not control.has_attr("checked"):
+                continue
+            if control.name == "select":
+                selected = control.select_one("option[selected]") or control.select_one("option")
+                value = selected.get("value", "") if selected else ""
+            elif control.name == "textarea":
+                value = control.get_text()
+            else:
+                value = control.get("value", "")
+            if name == field:
+                value = "__QUERY__"
+            payload.append((name, str(value)))
+        if not any(name == field for name, _ in payload):
+            payload.append((field, "__QUERY__"))
+        # A POST form is accepted only when the query field itself is positively
+        # identified; arbitrary POST forms are never replayed.
+        if method == "post":
+            evidence.append("formularz POST z jednoznacznym polem wyszukiwania")
+        else:
+            evidence.append("formularz GET z jednoznacznym polem wyszukiwania")
+        requests.append(SearchRequest(
+            method=method.upper(), url=urlunparse(parsed._replace(fragment="")),
+            data=tuple(payload), field=field, confidence=confidence,
+            evidence=tuple(dict.fromkeys(evidence)),
+        ))
+    requests.sort(key=lambda item: (item.confidence, item.method == "GET"), reverse=True)
+    return requests
+
+
+def _node_signature(node) -> tuple[str, tuple[str, ...]]:
+    classes = tuple(sorted(str(x).lower() for x in node.get("class", []) if x))
+    return node.name or "", classes
+
+
+def _same_origin_link(anchor, page_url: str) -> str:
+    href = (anchor.get("href") or "").strip()
+    if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+        return ""
+    target = urljoin(page_url, href)
+    parsed = urlparse(target)
+    if parsed.scheme not in {"http", "https"} or _origin(target) != _origin(page_url):
+        return ""
+    if parsed.path.rstrip("/") == urlparse(page_url).path.rstrip("/") and parsed.query == urlparse(page_url).query:
+        return ""
+    return urlunparse(parsed._replace(fragment=""))
+
+
+def _price_from_card(card) -> tuple[str, str]:
+    # First preference: semantic price fields inside this exact card.
+    for node in card.select(
+        '[itemprop="price"], [data-price], [class*="price"], [id*="price"], '
+        '[class*="cena"], [id*="cena"], meta[property*="price"]'
+    ):
+        raw = node.get("content") or node.get("data-price") or node.get("value") or node.get_text(" ", strip=True)
+        raw = re.sub(r"\s+", " ", str(raw)).strip()
+        if not raw:
+            continue
+        currency = "PLN" if re.search(r"(zł|PLN)", raw, re.I) else ""
+        match = PRICE_RE.search(raw)
+        if match:
+            return match.group(1).replace(" ", ""), match.group(2).upper()
+        if re.fullmatch(r"[0-9]+(?:[,.][0-9]{1,2})?", raw) and currency:
+            return raw, currency
+    # Fallback is deliberately limited to the card's own text, never page text.
+    match = PRICE_RE.search(card.get_text(" ", strip=True))
+    return (match.group(1).replace(" ", ""), match.group(2).upper()) if match else ("", "")
+
+
+def _card_evidence(node, anchor, sibling_repeats: int) -> tuple[int, list[str]]:
+    score, reasons = 0, []
+    if node.get("itemtype") and "product" in str(node.get("itemtype")).lower():
+        score += 5; reasons.append("schema-product")
+    if any(node.has_attr(attr) for attr in ("data-product", "data-product-id", "data-sku", "data-productid")):
+        score += 4; reasons.append("product-data-attribute")
+    if any(CARD_WORDS.search(str(value)) for value in node.get("class", [])) or CARD_WORDS.search(str(node.get("id", ""))):
+        score += 1; reasons.append("semantic-container-name")
+    if sibling_repeats >= 2:
+        score += 3; reasons.append("repeated-sibling-structure")
+    if node.select_one('[itemprop="price"], [itemprop="offers"], [class*="price"], [class*="cena"], [data-price]'):
+        score += 2; reasons.append("price-field")
+    if node.select_one('[itemprop="availability"], [class*="stock"], [class*="availability"], [class*="dostep"]'):
+        score += 1; reasons.append("availability-field")
+    if node.select_one("img"):
+        score += 1; reasons.append("product-image")
+    if node.select_one("h1, h2, h3, h4, [itemprop='name']"):
+        score += 1; reasons.append("title-heading")
+    if re.search(r"(add to cart|dodaj do koszyka|kup teraz)", node.get_text(" ", strip=True), re.I):
+        score += 1; reasons.append("purchase-action")
+    return score, reasons
+
+
+def extract_adaptive_result_cards(soup, page_url: str) -> list[dict]:
+    """Infer result cards from DOM repetition and local product evidence.
+
+    No product URL pattern or known shop CSS class is required. A card must
+    have a same-origin link and sufficient independent structural evidence.
+    """
+    rows, seen = [], set()
+    anchors = soup.select("a[href]")
+    for anchor in anchors:
+        target = _same_origin_link(anchor, page_url)
+        if not target or target in seen:
+            continue
+        title = re.sub(r"\s+", " ", anchor.get_text(" ", strip=True)).strip()
+        if not title or len(title) > 300 or len(title) < 2:
+            continue
+        best = None
+        node = anchor
+        for depth in range(1, 8):
+            node = node.parent
+            if node is None or getattr(node, "name", None) in {None, "body", "html"}:
+                break
+            parent = node.parent
+            repeats = 0
+            if parent:
+                signature = _node_signature(node)
+                repeats = sum(
+                    1 for sibling in parent.find_all(node.name, recursive=False)
+                    if _node_signature(sibling) == signature
+                    and sibling.select_one("a[href]")
+                )
+            score, reasons = _card_evidence(node, anchor, repeats)
+            # Prefer the smallest meaningful repeated unit; semantic evidence
+            # can identify a one-off card where repetition is unavailable.
+            if score >= 4 and (repeats >= 2 or score >= 5):
+                candidate = (score, -depth, node, reasons)
+                if best is None or candidate[:2] > best[:2]:
+                    best = candidate
+        if best is None:
+            continue
+        _, _, card, reasons = best
+        links = {
+            _same_origin_link(link, page_url)
+            for link in card.select("a[href]")
+        } - {""}
+        # Several distinct destinations in one container usually mean a list,
+        # navigation block, or page wrapper rather than one product card.
+        if len(links) > 3 or target not in links:
+            continue
+        heading = card.select_one("h1, h2, h3, h4, [itemprop='name']")
+        if len(title) < 4 and heading:
+            title = re.sub(r"\s+", " ", heading.get_text(" ", strip=True)).strip()
+        if not title:
+            continue
+        card_text = re.sub(r"\s+", " ", card.get_text(" ", strip=True)).strip()
+        price, currency = _price_from_card(card)
+        stock = STOCK_RE.search(card_text)
+        rows.append({
+            "title": title, "url": target, "price": price, "currency": currency,
+            "availability": stock.group(0) if stock else "",
+            "snippet": card_text[:500],
+            "card_confidence": min(0.99, 0.45 + len(set(reasons)) * 0.07),
+            "card_evidence": reasons,
+        })
+        seen.add(target)
+    return rows
+
+
+def inspect_search_page(soup, page_url: str, query: str = "") -> dict:
+    """Return machine-readable evidence about a first-party search response."""
+    cards = extract_adaptive_result_cards(soup, page_url)
+    text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
+    empty = bool(re.search(
+        r"(no results|no products found|brak wyników|nie znaleziono (?:żadnych )?(?:produktów|wyników))",
+        text, re.I,
+    ))
+    count = None
+    for node in soup.select(
+        "[data-total-count], [data-results-count], [class*='result-count'], "
+        "[class*='results-count'], [class*='product-count'], [class*='toolbar-amount']"
+    ):
+        raw = " ".join((str(node.get("data-total-count", "")),
+                        str(node.get("data-results-count", "")),
+                        node.get_text(" ", strip=True)))
+        match = re.search(r"(?:of|z|znaleziono|wyników|produktów)?\s*(\d{1,7})\s*(?:produktów|produkt|wyników|results|products)?\b", raw, re.I)
+        if match:
+            count = int(match.group(1))
+            break
+    return {
+        "cards": cards, "returned_cards": len(cards), "store_total_count": count,
+        "store_reported_no_results": empty or count == 0,
+        "has_product_evidence": bool(cards),
+    }
