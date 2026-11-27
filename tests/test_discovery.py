@@ -9,6 +9,7 @@ from app.discovery import (
 )
 from app.site_architecture import (
     detect_site_architecture, platform_search_urls, extract_product_metadata,
+    extract_store_search_results,
 )
 
 
@@ -228,6 +229,33 @@ class DiscoveryTests(unittest.TestCase):
                                  {"platform": "custom_or_unknown"}),
             [],
         )
+
+    def test_store_search_results_are_read_as_returned_without_stock_gate(self):
+        from bs4 import BeautifulSoup
+        html = """<html><body>
+          <div class="product-card">
+            <a class="product-title" href="/produkt/czujnik-ds18b20">Czujnik temperatury DS18B20</a>
+            <span class="price">12,50 zł</span>
+            <span class="availability">Na zamówienie</span>
+          </div>
+          <div class="product-card">
+            <a href="/produkt/czujnik-wodoodporny">Czujnik DS18B20 wodoodporny</a>
+            <span class="price">18,00 zł</span>
+          </div>
+        </body></html>"""
+        rows = extract_store_search_results(BeautifulSoup(html, "html.parser"),
+            "https://shop.example/search?q=DS18B20", "DS18B20")
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["price"], "12,50")
+        self.assertEqual(rows[0]["availability"], "Na zamówienie")
+        self.assertEqual(rows[1]["availability"], "")
+
+    def test_store_results_are_not_extracted_from_regular_homepage(self):
+        from bs4 import BeautifulSoup
+        html = """<html><body><div class="product-card">
+          <a href="/produkt/test">Test product</a></div></body></html>"""
+        self.assertEqual(extract_store_search_results(
+            BeautifulSoup(html, "html.parser"), "https://shop.example/", "test product"), [])
 
     def test_product_metadata_reads_opengraph_and_microdata(self):
         from bs4 import BeautifulSoup
