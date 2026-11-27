@@ -72,6 +72,19 @@ class AdaptiveSearchTests(unittest.TestCase):
                                              "https://independent.example/search?q=DS18B20")
         self.assertEqual(rows, [])
 
+    def test_custom_path_post_search_response_is_parsed_as_store_results(self):
+        from app.site_architecture import extract_store_search_results
+        html = """<html><body>
+          <div class="tile-a"><a href="/sku/10"><h3>DS18B20 czujnik</h3></a><b>15,00 zł</b></div>
+          <div class="tile-a"><a href="/sku/11"><h3>DS18B20 czujnik wodoodporny</h3></a><b>18,00 zł</b></div>
+        </body></html>"""
+        soup = BeautifulSoup(html, "html.parser")
+        rows = extract_store_search_results(
+            soup, "https://independent.example/catalog/query", "DS18B20", force_search=True
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["store_returned_cards"], 2)
+
     def test_search_page_report_separates_store_count_from_cards_read(self):
         html = """<html><body><p class="results-count">37 produktów</p>
           <div class="item-x"><a href="/sku/1"><h3>Produkt pierwszy</h3></a><b>10,00 zł</b></div>
