@@ -368,10 +368,14 @@ class MainWindow(QMainWindow):
         if reports:
             summaries = []
             for report in reports:
-                if report.get("store_reported_total") is not None:
-                    store_count = f"sklep zgłosił {report['store_reported_total']}"
+                if report.get("status") == "not_found":
+                    store_count = "sklep zgłosił brak produktu"
+                elif report.get("store_reported_total") is not None:
+                    store_count = f"sklep zgłosił {report['store_reported_total']} produktów"
+                elif report.get("status") == "found":
+                    store_count = f"sklep zwrócił produkt; odczytano {report.get('returned_cards', 0)} kart"
                 else:
-                    store_count = f"odczytano {report.get('returned_cards', 0)} kart"
+                    store_count = "brak jednoznacznej odpowiedzi wyszukiwarki"
                 summaries.append(f"{report.get('domain')}: {store_count}")
             self.status.setText("Wyniki sklepów (robot tylko odczytuje): " + "; ".join(summaries[:8]))
         elif results:
