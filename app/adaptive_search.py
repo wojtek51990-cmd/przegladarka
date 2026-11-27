@@ -371,6 +371,25 @@ def inspect_search_page(soup, page_url: str, query: str = "") -> dict:
 
 
 
+def has_dynamic_search_evidence(soup) -> bool:
+    """Avoid launching Chromium on ordinary pages with no search UI evidence."""
+    if soup.select_one(
+        'input[type="search"], input[placeholder*="szukaj" i], '
+        'input[aria-label*="search" i], [role="search"], '
+        'button[aria-label*="search" i], button[aria-label*="szukaj" i]'
+    ):
+        return True
+    for script in soup.select("script[src]"):
+        src = str(script.get("src", ""))
+        if re.search(r"(search|szukaj|catalog|product)", src, re.I):
+            return True
+    for script in soup.select("script:not([src])"):
+        raw = script.string or script.get_text()
+        if raw and re.search(r"(searchProducts|searchProductsUrl|searchEndpoint|szukajProdukt|searchForm)", raw, re.I):
+            return True
+    return False
+
+
 def render_store_search_page(url: str, query: str, timeout_ms: int = 15000) -> tuple[str, str] | None:
     """Optional embedded Chromium fallback for JavaScript-driven shop search.
 
