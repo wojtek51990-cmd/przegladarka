@@ -345,6 +345,40 @@ class DiscoveryTests(unittest.TestCase):
                 "https://shop.example/", html, "DS18B20")
             self.assertFalse(any("links2.php" in link for link in links))
 
+    def test_product_url_without_explicit_card_wrapper_is_never_counted(self):
+        from bs4 import BeautifulSoup
+        html = """<html><body><div class="search-results">
+          <ul><li><a href="/produkt/a">Produkt A</a></li></ul>
+          <article><a href="/produkt/poradnik">Poradnik produktowy</a></article>
+        </div></body></html>"""
+        rows = extract_store_search_results(
+            BeautifulSoup(html, "html.parser"),
+            "https://shop.example/search?q=produkt", "produkt")
+        self.assertEqual(rows, [])
+
+    def test_store_total_count_is_read_without_any_product_cards(self):
+        from bs4 import BeautifulSoup
+        from app.site_architecture import extract_store_search_summary
+        soup = BeautifulSoup(
+            "<div class='results-count'>Znaleziono 86 produktów</div>", "html.parser")
+        self.assertEqual(extract_store_search_summary(soup)["store_total_count"], 86)
+        self.assertEqual(extract_store_search_results(
+            soup, "https://shop.example/search?q=krem", "krem"), [])
+
+    def test_count_is_not_guessed_from_unlabelled_page_numbers(self):
+        from bs4 import BeautifulSoup
+        from app.site_architecture import extract_store_search_summary
+        soup = BeautifulSoup("<p>Promocja 37, kod 12. Produkty polecane.</p>", "html.parser")
+        self.assertIsNone(extract_store_search_summary(soup)["store_total_count"])
+
+    def test_explicit_zero_count_is_reported_even_without_cards(self):
+        from bs4 import BeautifulSoup
+        from app.site_architecture import extract_store_search_summary
+        soup = BeautifulSoup("<p>Znaleziono 0 produktów</p>", "html.parser")
+        summary = extract_store_search_summary(soup)
+        self.assertEqual(summary["store_total_count"], 0)
+        self.assertTrue(summary["store_reported_no_results"])
+
 
 if __name__ == "__main__":
     unittest.main()

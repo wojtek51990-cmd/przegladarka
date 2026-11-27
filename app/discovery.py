@@ -25,7 +25,7 @@ from bs4 import BeautifulSoup
 
 from app.site_architecture import (
     detect_site_architecture, platform_search_urls, extract_product_metadata,
-    extract_store_search_results,
+    extract_store_search_results, extract_store_search_summary,
 )
 
 USER_AGENT = "PrzegladarkaIndependentCrawler/0.5 (+public-web; respectful crawler)"
@@ -588,22 +588,9 @@ class PoliteCrawler:
                         {"q", "s", "search", "query", "text", "searchterm", "phrase"})
             )
             if search_page:
-                page_text = re.sub(r"\s+", " ", page_soup.get_text(" ", strip=True))
-                total_count = next((row.get("store_total_count") for row in store_rows
-                                    if row.get("store_total_count") is not None), None)
-                if total_count is None:
-                    for count_pattern in (
-                        r"\b\d+\s*[-–]\s*\d+\s+(?:z|of)\s+(\d{1,6})\b",
-                        r"(?:znaleziono|wyszukano|wyników|wyniki|products found|results found)\D{0,30}(\d{1,6})",
-                        r"(\d{1,6})\s+(?:produktów|produkt|products|wyników|results)",
-                    ):
-                        count_match = re.search(count_pattern, page_text, re.I)
-                        if count_match:
-                            total_count = int(count_match.group(1))
-                            break
-                no_results = bool(re.search(
-                    r"(nie znaleziono (?:żadnych )?(?:produktów|wyników)|brak wyników|no products found|no results)",
-                    page_text, re.I))
+                summary = extract_store_search_summary(page_soup)
+                total_count = summary["store_total_count"]
+                no_results = summary["store_reported_no_results"]
                 self.store_search_reports.append({
                     "domain": domain, "search_url": final_url,
                     "returned_cards": len(store_rows),
