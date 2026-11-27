@@ -239,10 +239,10 @@ class MainWindow(QMainWindow):
         root.addLayout(seed_row)
         self.discovery_status = QLabel("Baza źródeł jest przechowywana lokalnie na tym komputerze. Możesz rozpocząć skanowanie również bez wyszukiwarki, podając własne adresy startowe.")
         root.addWidget(self.discovery_status)
-        self.discovery_table = QTableWidget(0, 5)
-        self.discovery_table.setHorizontalHeaderLabels(["Produkt / strona", "Cena", "Domena", "Opis", "Adres"])
-        for col in (0, 1, 2, 4): self.discovery_table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
-        self.discovery_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.discovery_table = QTableWidget(0, 6)
+        self.discovery_table.setHorizontalHeaderLabels(["Produkt / strona", "Cena", "Dostępność wg sklepu", "Domena", "Opis", "Adres"])
+        for col in (0, 1, 2, 3, 5): self.discovery_table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        self.discovery_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.discovery_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.discovery_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.discovery_table.setAlternatingRowColors(True)
@@ -318,8 +318,8 @@ class MainWindow(QMainWindow):
         </ul>
         <h3>Weryfikacja wyników</h3>
         <ul>
-          <li>Oferta jest pokazywana po dopasowaniu treści do zapytania i wykryciu danych produktu, ceny lub danych strukturalnych.</li>
-          <li>Wykryta cena nie gwarantuje aktualnej dostępności ani wiarygodności sprzedawcy.</li>
+          <li>Wyniki z wewnętrznej wyszukiwarki sklepu są odczytywane z listy zwróconej przez sklep; robot nie ocenia ponownie dostępności ani nie odrzuca wyniku z powodu braku ceny.</li>
+          <li>Cena i dostępność są przepisywane wyłącznie wtedy, gdy sklep pokazuje je w wyniku. Brak danych oznacza brak informacji.</li>
           <li>Robot respektuje robots.txt, ogranicza tempo pobierania i nie omija logowania, CAPTCHA, paywalli ani zabezpieczeń antybotowych.</li>
           <li>Nie gwarantuje kompletności Internetu. Wyniki zależą od katalogu startowego, publicznej dostępności stron i jakości ich map witryn.</li>
         </ul>
@@ -401,9 +401,10 @@ class MainWindow(QMainWindow):
             self.discovery_table.setItem(row, 0, title)
             price = " ".join(x for x in (item.get("price", ""), item.get("currency", "")) if x)
             self.discovery_table.setItem(row, 1, QTableWidgetItem(price or "Nie wykryto"))
-            self.discovery_table.setItem(row, 2, QTableWidgetItem(item.get("domain", "")))
-            self.discovery_table.setItem(row, 3, QTableWidgetItem(item.get("snippet", "")))
-            self.discovery_table.setItem(row, 4, QTableWidgetItem(item.get("url", "")))
+            self.discovery_table.setItem(row, 2, QTableWidgetItem(item.get("availability") or "Brak informacji od sklepu"))
+            self.discovery_table.setItem(row, 3, QTableWidgetItem(item.get("domain", "")))
+            self.discovery_table.setItem(row, 4, QTableWidgetItem(item.get("snippet", "")))
+            self.discovery_table.setItem(row, 5, QTableWidgetItem(item.get("url", "")))
         self.discovery_button.setEnabled(True)
         self.discovery_status.setText(f"Sprawdzone strony: {data.get('pages_checked', 0)} | odrzucone: {data.get('pages_rejected', 0)} | zweryfikowane domeny: {len(data.get('sources', []))} | adresy startowe: {data.get('seed_count', 0)} | dopasowane oferty: {len(rows)}")
         errors = data.get("errors", [])
