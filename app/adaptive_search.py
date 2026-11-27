@@ -355,14 +355,16 @@ def render_store_search_page(url: str, query: str, timeout_ms: int = 15000) -> t
                     if locator.count():
                         search_box = locator
                         break
-                if search_box is not None:
-                    search_box.fill(query, timeout=3000)
-                    search_box.press("Enter", timeout=3000)
-                    try:
-                        page.wait_for_load_state("domcontentloaded", timeout=5000)
-                    except Exception:
-                        pass
-                    page.wait_for_timeout(1200)
+                if search_box is None:
+                    browser.close()
+                    return None
+                search_box.fill(query, timeout=3000)
+                search_box.press("Enter", timeout=3000)
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=5000)
+                except Exception:
+                    pass
+                page.wait_for_timeout(1200)
             if _origin(page.url) != original_origin:
                 browser.close()
                 return None
