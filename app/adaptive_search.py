@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter
+import unicodedata
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
@@ -115,7 +115,20 @@ def discover_search_requests(html_soup, page_url: str) -> list[SearchRequest]:
             str(form.get("action", "")),
             form.get_text(" ", strip=True)[:500],
         ]).lower()
-        if re.search(r"(google|gcse|sitesearch|captcha|checkout|koszyk|login|logowanie)", form_blob):
+        control_names = {
+            str(control.get("name", "")).lower()
+            for control in form.select("[name]")
+        }
+        # Reject embedded third-party search widgets even when their form is
+        # technically hosted on the shop domain (e.g. Google Custom Search).
+        external_search_signature = (
+            bool(control_names.intersection({"sitesearch", "cx", "gcse"}))
+            or ("client" in control_names and bool(control_names.intersection({"forid", "cof", "domains"})))
+            or bool(re.search(r"(google|gcse|sitesearch)", form_blob))
+        )
+        if external_search_signature or re.search(
+            r"(captcha|checkout|koszyk|login|logowanie)", form_blob
+        ):
             continue
         field, confidence, evidence = _is_search_form(form)
         if not field:
@@ -343,9 +356,31 @@ def extract_adaptive_result_cards(soup, page_url: str) -> list[dict]:
     return rows
 
 
+def _query_matches_title(title: str, query: str) -> bool:
+    """Reject unrelated catalogue cards when a shop ignores the search term.
+
+    Match against the card title only, never the whole page or surrounding
+    navigation. Prefer distinctive query terms; short generic words are used
+    only when the query contains no longer token.
+    """
+    def normalize(value: str) -> str:
+        value = unicodedata.normalize("NFKD", value or "")
+        value = "".join(ch for ch in value if not unicodedata.combining(ch))
+        return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+    wanted = normalize(query).split()
+    if not wanted:
+        return True
+    distinctive = [token for token in wanted if len(token) >= 5]
+    terms = distinctive or wanted
+    haystack = f" {normalize(title)} "
+    return any(f" {token} " in haystack for token in terms)
+
+
 def inspect_search_page(soup, page_url: str, query: str = "") -> dict:
     """Return machine-readable evidence about a first-party search response."""
-    cards = extract_adaptive_result_cards(soup, page_url)
+    raw_cards = extract_adaptive_result_cards(soup, page_url)
+    cards = [row for row in raw_cards if _query_matches_title(row.get("title", ""), query)]
     text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
     empty = bool(re.search(
         r"(no results|no products found|brak wyników|nie znaleziono (?:żadnych )?(?:produktów|wyników))",
@@ -364,7 +399,9 @@ def inspect_search_page(soup, page_url: str, query: str = "") -> dict:
             count = int(match.group(1))
             break
     return {
-        "cards": cards, "returned_cards": len(cards), "store_total_count": count,
+        "cards": cards, "returned_cards": len(cards), "candidate_cards": len(raw_cards),
+        "rejected_nonmatching_cards": len(raw_cards) - len(cards),
+        "store_total_count": count,
         "store_reported_no_results": empty or count == 0,
         "has_product_evidence": bool(cards),
     }
