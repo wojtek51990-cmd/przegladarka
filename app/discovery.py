@@ -458,7 +458,7 @@ class PoliteCrawler:
                 ]).lower()
                 if ("google" in form_blob or "gcse" in form_blob
                         or "sitesearch" in form_blob
-                        or re.search(r"client\\s*=\\s*pub-", form_blob)
+                        or re.search(r"client\s*=\s*pub-", form_blob)
                         or urlparse(action).path.lower().endswith("links2.php")):
                     continue
                 search_field = None
@@ -588,13 +588,13 @@ class PoliteCrawler:
                         {"q", "s", "search", "query", "text", "searchterm", "phrase"})
             )
             if search_page:
-                page_text = re.sub(r"\\s+", " ", page_soup.get_text(" ", strip=True))
+                page_text = re.sub(r"\s+", " ", page_soup.get_text(" ", strip=True))
                 total_count = next((row.get("store_total_count") for row in store_rows
                                     if row.get("store_total_count") is not None), None)
                 if total_count is None:
                     for count_pattern in (
-                        r"(?:znaleziono|wyszukano|wyników|wyniki|products found|results found)\\D{0,30}(\\d{1,6})",
-                        r"(\\d{1,6})\\s+(?:produktów|produkt|products|wyników|results)",
+                        r"(?:znaleziono|wyszukano|wyników|wyniki|products found|results found)\D{0,30}(\d{1,6})",
+                        r"(\d{1,6})\s+(?:produktów|produkt|products|wyników|results)",
                     ):
                         count_match = re.search(count_pattern, page_text, re.I)
                         if count_match:
