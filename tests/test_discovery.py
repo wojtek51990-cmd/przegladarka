@@ -332,6 +332,19 @@ class DiscoveryTests(unittest.TestCase):
             "https://shop.example/search?q=notfound", "notfound")
         self.assertEqual(rows, [])
 
+    def test_google_custom_search_proxy_form_is_not_treated_as_shop_search(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            crawler = PoliteCrawler(SourceDB(Path(tmp) / "db.sqlite3"))
+            html = """<html><body>
+              <form action="/links2.php" method="get" class="gcse-search">
+                <input type="text" name="q">
+                <input type="hidden" name="sitesearch" value="shop.example">
+                <input type="hidden" name="client" value="pub-123456">
+              </form></body></html>"""
+            _, _, _, links, _, _, _ = crawler.extract(
+                "https://shop.example/", html, "DS18B20")
+            self.assertFalse(any("links2.php" in link for link in links))
+
 
 if __name__ == "__main__":
     unittest.main()
