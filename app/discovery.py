@@ -536,6 +536,7 @@ class PoliteCrawler:
                 queue.append(seed)
         domain_counts = {}
         results = []
+        store_result_urls = set()
         while queue and len(seen) < max_pages:
             url = queue.popleft()
             if url in seen:
@@ -565,6 +566,7 @@ class PoliteCrawler:
                 BeautifulSoup(html, "html.parser"), final_url, query
             )
             for store_row in store_rows:
+                store_result_urls.add(store_row["url"])
                 self.db.save_offer(
                     store_row["url"], domain, store_row["title"],
                     store_row["price"], store_row["currency"],
@@ -580,13 +582,16 @@ class PoliteCrawler:
             if commercial_source:
                 self.db.save_source(domain, source_type)
             is_offer, price, currency = offer_data
-            if is_offer:
+            if is_offer and final_url in store_result_urls:
+                # A product detail page may enrich a card already returned by
+                # the store search, but can never create a new search result.
                 self.db.save_page(final_url, domain, title, snippet)
                 self.db.save_offer(final_url, domain, title, price, currency, snippet, query)
                 results.append({
                     "title": title or domain, "url": final_url, "domain": domain,
                     "price": price, "currency": currency, "snippet": snippet[:350],
-                    "source": "Crawler", "relevance": round(relevance, 2),
+                    "availability": "", "source": "Wynik wyszukiwarki sklepu",
+                    "relevance": round(relevance, 2),
                 })
             elif commercial_source and relevance >= 0.5:
                 # Keep a relevant commercial product/category page, not arbitrary pages.
@@ -664,10 +669,9 @@ def discover(query: str, deep=False, db_path=None, extra_seeds=None):
     crawler = PoliteCrawler(db, max_pages=60 if deep else 30,
                             pages_per_domain=12 if deep else 6)
     fresh = crawler.crawl(query, seed_urls, deep=deep) if seed_urls else []
-    cached = db.offers_for_query(query, 100)
-    merged = {row["url"]: row for row in cached}
-    for row in fresh:
-        merged[row["url"]] = row
+    # Search output is sourced from current first-party store result pages.
+    # Older crawler-inferred database rows are deliberately not mixed in.
+    merged = {row["url"]: row for row in fresh}
     ranked = sorted(merged.values(),
                     key=lambda row: (row.get("relevance", 0), bool(row.get("price")),
                                      row.get("title", "")), reverse=True)
