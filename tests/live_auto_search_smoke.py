@@ -50,7 +50,9 @@ def main():
 
     total_pages = 0
     total_searches = 0
-    total_offers = 0
+    total_returned_cards = 0
+    total_reported_products = 0
+    total_search_pages = 0
     tested = 0
     reports = []
 
@@ -63,20 +65,27 @@ def main():
                 tested += 1
                 total_pages += crawler.pages_checked
                 total_searches += len(crawler.detected_searches)
-                total_offers += len(offers)
+                search_reports = crawler.store_search_reports
+                total_search_pages += len(search_reports)
+                total_returned_cards += sum(x["returned_cards"] for x in search_reports)
+                total_reported_products += sum(
+                    x["store_reported_total"] or 0 for x in search_reports
+                )
                 host = seed.split("//", 1)[-1].split("/", 1)[0]
                 reports.append({
                     "host": host,
                     "pages": crawler.pages_checked,
                     "auto_search_urls": crawler.detected_searches,
-                    "offers": len(offers),
+                    "search_reports": search_reports,
+                    "returned_cards": sum(x["returned_cards"] for x in search_reports),
                     "errors": crawler.errors[:2],
                 })
             except Exception as exc:
                 host = seed.split("//", 1)[-1].split("/", 1)[0]
                 reports.append({
                     "host": host, "pages": 0, "auto_search_urls": [],
-                    "offers": 0, "errors": [type(exc).__name__],
+                    "search_reports": [], "returned_cards": 0,
+                    "errors": [type(exc).__name__],
                 })
 
     print(f"Query: {QUERY}")
@@ -84,15 +93,23 @@ def main():
     print(f"Retail seed domains tested: {tested}")
     print(f"Pages checked: {total_pages}")
     print(f"Automatically detected first-party search forms: {total_searches}")
-    print(f"Confirmed product offers: {total_offers}")
+    print(f"Store search pages actually checked: {total_search_pages}")
+    print(f"Product cards read from store results: {total_returned_cards}")
+    print(f"Products reported by stores (sum; may include pagination): {total_reported_products}")
     for item in reports:
         print(
             f"- {item['host']}: pages={item['pages']}, "
             f"auto_search_forms={len(item['auto_search_urls'])}, "
-            f"offers={item['offers']}, errors={item['errors']}"
+            f"store_search_pages={len(item['search_reports'])}, "
+            f"returned_cards={item['returned_cards']}, errors={item['errors']}"
         )
         for url in item["auto_search_urls"][:2]:
             print(f"  AUTO_SEARCH_URL: {url}")
+        for report in item["search_reports"]:
+            print(f"  STORE_SEARCH: status={report['status']}, "
+                  f"store_total={report['store_reported_total']}, "
+                  f"cards_read={report['returned_cards']}, "
+                  f"product_exists={report['product_exists']}")
 
     # A live regression is meaningful only if the crawler reaches at least
     # one real shop's public GET search form without a manually supplied URL.
