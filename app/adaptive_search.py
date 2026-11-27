@@ -217,6 +217,64 @@ def _card_evidence(node, anchor, sibling_repeats: int) -> tuple[int, list[str]]:
     return score, reasons
 
 
+def _extract_json_product_records(soup, page_url: str) -> list[dict]:
+    """Read explicit product objects from public embedded JSON application state."""
+    rows, seen = [], set()
+    scripts = soup.select(
+        'script[type="application/ld+json"], script[type="application/json"], '
+        'script#__NEXT_DATA__, script[id*="state" i], script[id*="data" i]'
+    )
+    def walk(value):
+        if isinstance(value, dict):
+            yield value
+            for child in value.values():
+                yield from walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from walk(child)
+    for script in scripts:
+        raw = script.string or script.get_text()
+        if not raw or len(raw) > 2_000_000:
+            continue
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        for obj in walk(payload):
+            name = obj.get("name") or obj.get("title") or obj.get("productName")
+            raw_url = obj.get("url") or obj.get("productUrl") or obj.get("link")
+            if not isinstance(name, str) or not isinstance(raw_url, str):
+                continue
+            target = _same_origin_link(type("Link", (), {"get": lambda self, key, default=None: raw_url if key == "href" else default})(), page_url)
+            if not target or target in seen or len(name.strip()) < 3 or len(name) > 300:
+                continue
+            types = obj.get("@type", [])
+            types = [types] if isinstance(types, str) else types
+            has_product_identity = (
+                any("product" in str(item).lower() for item in types)
+                or any(key in obj for key in ("sku", "productId", "product_id", "variantId"))
+                or any(key in obj for key in ("price", "offers", "availability", "stock"))
+            )
+            if not has_product_identity:
+                continue
+            price_value = obj.get("price")
+            currency = str(obj.get("priceCurrency") or obj.get("currency") or "")
+            if isinstance(price_value, dict):
+                currency = currency or str(price_value.get("currency") or "")
+                price_value = price_value.get("value") or price_value.get("amount")
+            availability = obj.get("availability") or obj.get("stock") or ""
+            rows.append({
+                "title": name.strip(), "url": target,
+                "price": str(price_value) if price_value is not None else "",
+                "currency": currency.upper(),
+                "availability": str(availability),
+                "snippet": json.dumps(obj, ensure_ascii=False)[:500],
+                "card_confidence": 0.96, "card_evidence": ["embedded-product-json"],
+            })
+            seen.add(target)
+    return rows
+
+
 def extract_adaptive_result_cards(soup, page_url: str) -> list[dict]:
     """Infer result cards from DOM repetition and local product evidence.
 
@@ -232,7 +290,7 @@ def extract_adaptive_result_cards(soup, page_url: str) -> list[dict]:
         title = re.sub(r"\s+", " ", anchor.get_text(" ", strip=True)).strip()
         if not title or len(title) > 300 or len(title) < 2:
             continue
-        best = None
+        candidates = []
         node = anchor
         for depth in range(1, 8):
             node = node.parent
@@ -248,23 +306,18 @@ def extract_adaptive_result_cards(soup, page_url: str) -> list[dict]:
                     and sibling.select_one("a[href]")
                 )
             score, reasons = _card_evidence(node, anchor, repeats)
-            # Prefer the smallest meaningful repeated unit; semantic evidence
-            # can identify a one-off card where repetition is unavailable.
+            # A custom wrapper can be identified by repetition even when it
+            # has no familiar product class or product URL.
             if score >= 4 and (repeats >= 2 or score >= 5):
-                candidate = (score, -depth, node, reasons)
-                if best is None or candidate[:2] > best[:2]:
-                    best = candidate
-        if best is None:
+                links = {
+                    _same_origin_link(link, page_url)
+                    for link in node.select("a[href]")
+                } - {""}
+                if len(links) <= 3 and target in links:
+                    candidates.append((score, -depth, node, reasons))
+        if not candidates:
             continue
-        _, _, card, reasons = best
-        links = {
-            _same_origin_link(link, page_url)
-            for link in card.select("a[href]")
-        } - {""}
-        # Several distinct destinations in one container usually mean a list,
-        # navigation block, or page wrapper rather than one product card.
-        if len(links) > 3 or target not in links:
-            continue
+        _, _, card, reasons = max(candidates, key=lambda item: item[:2])
         heading = card.select_one("h1, h2, h3, h4, [itemprop='name']")
         if len(title) < 4 and heading:
             title = re.sub(r"\s+", " ", heading.get_text(" ", strip=True)).strip()
@@ -281,6 +334,12 @@ def extract_adaptive_result_cards(soup, page_url: str) -> list[dict]:
             "card_evidence": reasons,
         })
         seen.add(target)
+    # Embedded product records supplement DOM cards; they are still scoped to
+    # the store's own returned search document and must carry product identity.
+    for row in _extract_json_product_records(soup, page_url):
+        if row["url"] not in seen:
+            rows.append(row)
+            seen.add(row["url"])
     return rows
 
 
