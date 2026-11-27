@@ -25,6 +25,7 @@ from bs4 import BeautifulSoup
 
 from app.site_architecture import (
     detect_site_architecture, platform_search_urls, extract_product_metadata,
+    extract_store_search_results,
 )
 
 USER_AGENT = "PrzegladarkaIndependentCrawler/0.5 (+public-web; respectful crawler)"
@@ -173,9 +174,13 @@ class SourceDB:
               last_checked TEXT DEFAULT CURRENT_TIMESTAMP, status TEXT);
             CREATE TABLE IF NOT EXISTS offers(
               url TEXT PRIMARY KEY, domain TEXT NOT NULL, title TEXT, price TEXT,
-              currency TEXT, snippet TEXT, query TEXT, found_at TEXT DEFAULT CURRENT_TIMESTAMP);
+              currency TEXT, snippet TEXT, query TEXT, availability TEXT DEFAULT '',
+              found_at TEXT DEFAULT CURRENT_TIMESTAMP);
             CREATE INDEX IF NOT EXISTS idx_offers_domain ON offers(domain);
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(offers)")}
+            if "availability" not in columns:
+                db.execute("ALTER TABLE offers ADD COLUMN availability TEXT DEFAULT ''")
 
     @contextmanager
     def connect(self):
@@ -213,13 +218,14 @@ class SourceDB:
                 (domain,),
             )
 
-    def save_offer(self, url, domain, title, price, currency, snippet, query):
+    def save_offer(self, url, domain, title, price, currency, snippet, query, availability=""):
         with self.connect() as db:
             db.execute(
-                "INSERT INTO offers(url,domain,title,price,currency,snippet,query) VALUES(?,?,?,?,?,?,?) "
+                "INSERT INTO offers(url,domain,title,price,currency,snippet,query,availability) VALUES(?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(url) DO UPDATE SET title=excluded.title,price=excluded.price,"
-                "currency=excluded.currency,snippet=excluded.snippet,query=excluded.query,found_at=CURRENT_TIMESTAMP",
-                (url, domain, title, price, currency, snippet, query),
+                "currency=excluded.currency,snippet=excluded.snippet,query=excluded.query,"
+                "availability=excluded.availability,found_at=CURRENT_TIMESTAMP",
+                (url, domain, title, price, currency, snippet, query, availability),
             )
 
     def known_sources(self, limit=100):
@@ -554,6 +560,20 @@ class PoliteCrawler:
                 continue
             self.pages_checked += 1
             title, snippet, offer_data, links, source_type, commercial_source, relevance = self.extract(final_url, html, query)
+            # Trust the store's own search results; read cards without re-scoring stock.
+            store_rows = extract_store_search_results(
+                BeautifulSoup(html, "html.parser"), final_url, query
+            )
+            for store_row in store_rows:
+                self.db.save_offer(
+                    store_row["url"], domain, store_row["title"],
+                    store_row["price"], store_row["currency"],
+                    store_row["snippet"], query, store_row["availability"],
+                )
+                results.append({
+                    **store_row, "domain": domain,
+                    "source": "Wynik wyszukiwarki sklepu", "relevance": 1.0,
+                })
             if is_adult_content(final_url, title, snippet):
                 self.pages_rejected += 1
                 continue
@@ -580,6 +600,10 @@ class PoliteCrawler:
             # visit its matching product detail links before generic seed/sitemap
             # URLs, otherwise the global page budget can be consumed first.
             path_lower = urlparse(final_url).path.lower()
+            if store_rows:
+                for link in reversed([row["url"] for row in store_rows]):
+                    if link not in seen and len(queue) < max_pages * 8:
+                        queue.appendleft(link)
             if domain == "rossmann.pl" and path_lower.startswith("/szukaj"):
                 priority_links = [
                     link for link in links
