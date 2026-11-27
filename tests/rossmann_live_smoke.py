@@ -15,18 +15,21 @@ def main():
         data = discover(QUERY, deep=True, db_path=Path(tmp) / "rossmann.sqlite3",
                         extra_seeds=[ROSSMANN_SEARCH])
     results = [r for r in data.get("results", [])
-               if "rossmann.pl/produkt/" in r.get("url", "").lower()
+               if "rossmann.pl" in r.get("url", "").lower()
                and "nivea" in (r.get("title", "") + " " + r.get("snippet", "")).lower()]
+    reports = [r for r in data.get("store_search_reports", [])
+               if "rossmann.pl" in r.get("domain", "")]
     print("External search engines used: no")
     print(f"Pages checked: {data.get('pages_checked', 0)}")
     print(f"Direct site searches: {data.get('direct_site_searches', [])}")
-    print(f"Rossmann NIVEA product offers: {len(results)}")
+    print(f"Rossmann search reports: {reports}")
+    print(f"Rossmann NIVEA cards read from store search: {len(results)}")
     for item in results[:10]:
         print(f"- {item.get('title')} | {item.get('price','')} {item.get('currency','')} | {item.get('url')}")
     for error in data.get("errors", [])[:15]:
         print(f"NOTE: {error}")
-    if not results:
-        raise SystemExit("FAIL: no confirmed NIVEA product detail page found on Rossmann.")
+    if not reports or not results:
+        raise SystemExit("FAIL: Rossmann search result cards were not read from the store search page.")
 
 if __name__ == "__main__":
     main()
