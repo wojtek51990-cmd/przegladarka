@@ -23,7 +23,7 @@ from urllib.robotparser import RobotFileParser
 import requests
 from bs4 import BeautifulSoup
 
-from app.adaptive_search import discover_search_requests
+from app.adaptive_search import discover_search_requests, render_store_search_page
 from app.site_architecture import (
     detect_site_architecture, platform_search_urls, extract_product_metadata,
     extract_store_search_results, extract_store_search_summary,
@@ -506,6 +506,7 @@ class PoliteCrawler:
         domain_counts = {}
         results = []
         store_result_urls = set()
+        browser_attempted = set()
         while queue and len(seen) < max_pages:
             url, request_method, request_data = queue.popleft()
             request_key = (url, request_method, tuple(sorted((request_data or {}).items())))
@@ -543,6 +544,31 @@ class PoliteCrawler:
                 or bool(set(parse_qs(parsed_page.query)) &
                         {"q", "s", "search", "query", "text", "searchterm", "phrase"})
             )
+            # One rendered-browser attempt per domain: use it only when static
+            # HTML cannot expose the result cards or even the search control.
+            needs_browser = (
+                not store_rows and domain not in browser_attempted
+                and (search_page or (
+                    not getattr(self, "_last_search_form_links", set())
+                    and not getattr(self, "_last_adaptive_search_requests", [])
+                ))
+            )
+            if needs_browser:
+                browser_attempted.add(domain)
+                rendered = render_store_search_page(final_url, query)
+                if rendered:
+                    final_url, html = rendered
+                    title, snippet, offer_data, links, source_type, commercial_source, relevance = self.extract(
+                        final_url, html, query
+                    )
+                    page_soup = BeautifulSoup(html, "html.parser")
+                    store_rows = extract_store_search_results(page_soup, final_url, query)
+                    parsed_page = urlparse(final_url)
+                    search_page = (
+                        bool(re.search(r"/(?:search|szukaj|wyniki|catalogsearch)(?:/|$)", parsed_page.path, re.I))
+                        or bool(set(parse_qs(parsed_page.query)) &
+                                {"q", "s", "search", "query", "text", "searchterm", "phrase"})
+                    )
             if search_page:
                 summary = extract_store_search_summary(page_soup)
                 total_count = summary["store_total_count"]
@@ -580,7 +606,7 @@ class PoliteCrawler:
             if domain_counts[domain] == 1:
                 for sitemap_url in reversed(self.sitemap_urls(final_url, cap=60 if deep else 30)):
                     if sitemap_url not in seen:
-                        queue.appendleft(sitemap_url)
+                        queue.appendleft((sitemap_url, "GET", None))
             # Search forms discovered on this page take priority over generic links.
             # POST is executed only for a positively identified same-origin search form.
             for request in reversed(getattr(self, "_last_adaptive_search_requests", [])):
