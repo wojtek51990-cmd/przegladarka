@@ -165,7 +165,7 @@ def extract_store_search_summary(soup) -> dict:
     return {"store_total_count": total, "store_reported_no_results": no_results}
 
 
-def extract_store_search_results(soup, page_url: str, query: str) -> list[dict]:
+def extract_store_search_results(soup, page_url: str, query: str, force_search: bool = False) -> list[dict]:
     """Compatibility adapter: use the platform-independent adaptive DOM engine."""
     from app.adaptive_search import inspect_search_page
 
@@ -176,7 +176,7 @@ def extract_store_search_results(soup, page_url: str, query: str) -> list[dict]:
     ))
     has_search_param = any(key in params for key in
                            ("q", "s", "search", "query", "text", "searchterm", "phrase"))
-    if not (search_path or has_search_param):
+    if not (force_search or search_path or has_search_param):
         return []
 
     report = inspect_search_page(soup, page_url, query)
