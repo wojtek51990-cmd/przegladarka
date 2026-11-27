@@ -536,7 +536,7 @@ class PoliteCrawler:
             # its explicit product cards. Product detail pages never create,
             # validate, or overwrite search results.
             page_soup = BeautifulSoup(html, "html.parser")
-            store_rows = extract_store_search_results(page_soup, final_url, query, force_search=(request_method == "POST"))
+            store_rows = extract_store_search_results(page_soup, final_url, query, force_search=(request_method == "POST"), raw_response=html)
             parsed_page = urlparse(final_url)
             from urllib.parse import parse_qs
             search_page = (request_method == "POST") or (
@@ -559,11 +559,11 @@ class PoliteCrawler:
                         final_url, html, query
                     )
                     page_soup = BeautifulSoup(html, "html.parser")
-                    store_rows = extract_store_search_results(page_soup, final_url, query, force_search=True)
+                    store_rows = extract_store_search_results(page_soup, final_url, query, force_search=True, raw_response=html)
                     parsed_page = urlparse(final_url)
                     search_page = True
             if search_page:
-                summary = extract_store_search_summary(page_soup)
+                summary = extract_store_search_summary(page_soup, raw_response=html)
                 total_count = summary["store_total_count"]
                 no_results = summary["store_reported_no_results"]
                 self.store_search_reports.append({
