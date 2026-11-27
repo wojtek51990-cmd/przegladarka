@@ -324,7 +324,9 @@ class DiscoveryTests(unittest.TestCase):
 
     def test_search_page_with_explicit_zero_products_returns_no_cards(self):
         from bs4 import BeautifulSoup
-        html = "<html><body><p>Znaleziono 0 produktów</p><p>Brak wyników</p></body></html>"
+        html = """<html><body><p>Znaleziono 0 produktów</p><p>Brak wyników</p>
+          <div class="product-card"><a href="/produkt/recommended">Polecany produkt</a></div>
+        </body></html>"""
         rows = extract_store_search_results(
             BeautifulSoup(html, "html.parser"),
             "https://shop.example/search?q=notfound", "notfound")
