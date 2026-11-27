@@ -230,7 +230,7 @@ def _card_evidence(node, anchor, sibling_repeats: int) -> tuple[int, list[str]]:
     return score, reasons
 
 
-def _extract_json_product_records(soup, page_url: str) -> list[dict]:
+def _extract_json_product_records(soup, page_url: str, raw_response: str | None = None) -> list[dict]:
     """Read products from embedded state or raw first-party JSON/AJAX responses."""
     rows, seen = [], set()
     scripts = soup.select(
@@ -238,6 +238,8 @@ def _extract_json_product_records(soup, page_url: str) -> list[dict]:
         'script#__NEXT_DATA__, script[id*="state" i], script[id*="data" i]'
     )
     raw_payloads = []
+    if raw_response and len(raw_response) <= 2_000_000 and raw_response.lstrip().startswith(('{', '[')):
+        raw_payloads.append(raw_response.strip())
     for script in scripts:
         raw = script.string or script.get_text()
         if raw and len(raw) <= 2_000_000:
@@ -387,10 +389,6 @@ def extract_adaptive_result_cards(soup, page_url: str) -> list[dict]:
         seen.add(target)
     # Embedded product records supplement DOM cards; they are still scoped to
     # the store's own returned search document and must carry product identity.
-    for row in _extract_json_product_records(soup, page_url):
-        if row["url"] not in seen:
-            rows.append(row)
-            seen.add(row["url"])
     return rows
 
 
@@ -415,9 +413,12 @@ def _query_matches_title(title: str, query: str) -> bool:
     return any(f" {token} " in haystack for token in terms)
 
 
-def inspect_search_page(soup, page_url: str, query: str = "") -> dict:
+def inspect_search_page(soup, page_url: str, query: str = "", raw_response: str | None = None) -> dict:
     """Return machine-readable evidence about a first-party search response."""
     raw_cards = extract_adaptive_result_cards(soup, page_url)
+    for row in _extract_json_product_records(soup, page_url, raw_response):
+        if not any(existing["url"] == row["url"] for existing in raw_cards):
+            raw_cards.append(row)
     cards = [row for row in raw_cards if _query_matches_title(row.get("title", ""), query)]
     text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
     empty = bool(re.search(
@@ -439,7 +440,7 @@ def inspect_search_page(soup, page_url: str, query: str = "") -> dict:
     # Raw AJAX JSON often carries the authoritative total in its own payload
     # rather than in a rendered "results-count" element.
     if count is None:
-        raw_body = soup.get_text(" ", strip=True)
+        raw_body = raw_response or soup.get_text(" ", strip=True)
         if raw_body and len(raw_body) <= 2_000_000 and raw_body.lstrip().startswith(("{", "[")):
             try:
                 payload = json.loads(raw_body)
