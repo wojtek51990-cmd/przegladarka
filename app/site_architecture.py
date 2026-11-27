@@ -7,7 +7,7 @@ No POST forms, private APIs, login flows, CAPTCHA or anti-bot bypasses.
 from __future__ import annotations
 
 import re
-from urllib.parse import quote, urlencode, urlparse, urlunparse
+from urllib.parse import quote, urlencode, urljoin, urlparse, urlunparse
 
 
 PLATFORM_FINGERPRINTS = {
