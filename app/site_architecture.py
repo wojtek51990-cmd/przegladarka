@@ -142,12 +142,6 @@ def extract_store_search_results(soup, page_url: str, query: str) -> list[dict]:
 
     # Product-card wrappers only. Generic <li>, <article>, or page-wide
     # containers are deliberately not considered product cards.
-    card_selector = (
-        '[data-product-id], [data-product], [itemtype*="schema.org/Product" i], '
-        '[class~="product-card"], [class~="product-item"], [class~="product-tile"], '
-        '[class~="product-miniature"], [class~="product-box"], [class~="productbox"], '
-        '[class~="product-container"]'
-    )
     product_href = re.compile(
         r"/(?:produkt|product|products|p|item)(?:/|[-_])", re.I
     )
@@ -188,9 +182,6 @@ def extract_store_search_results(soup, page_url: str, query: str) -> list[dict]:
         for _ in range(7):
             if node is None:
                 break
-            if getattr(node, "select_one", None) and node.select_one(card_selector):
-                # Avoid choosing a wrapper that merely contains a nested card.
-                pass
             if getattr(node, "name", None) and node.select_one is not None:
                 classes = node.get("class", [])
                 node_id = node.get("id", "")
@@ -224,6 +215,10 @@ def extract_store_search_results(soup, page_url: str, query: str) -> list[dict]:
             "store_reported_no_results": no_results,
         })
         seen.add(target)
+    # A store-declared zero is authoritative: do not surface recommendation
+    # widgets or other product links that may appear elsewhere on the page.
+    if total_count == 0:
+        return []
     # A store's explicit count may exceed the cards loaded on the current page.
     # Keep both values: returned_cards is what was actually read, total_count
     # is what the store itself reported. Never fabricate missing product rows.
