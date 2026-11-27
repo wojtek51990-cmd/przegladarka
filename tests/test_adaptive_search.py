@@ -40,6 +40,32 @@ class AdaptiveSearchTests(unittest.TestCase):
         self.assertEqual(requests[0].field, "term")
         self.assertNotIn("csrf_token", dict(requests[0].data))
 
+    def test_rejects_embedded_google_custom_search_form(self):
+        html = """<html><body><form action="/links2.php" method="get">
+          <input name="q"><input type="hidden" name="sitesearch" value="shop.example">
+          <input type="hidden" name="client" value="pub-example">
+          <input type="hidden" name="forid" value="1">
+        </form></body></html>"""
+        requests = discover_search_requests(
+            BeautifulSoup(html, "html.parser"), "https://shop.example/"
+        )
+        self.assertEqual(requests, [])
+
+    def test_search_page_discards_unrelated_catalogue_cards(self):
+        html = """<html><body>
+          <div class="tile-a"><a href="/sku/1"><h3>Czujnik DS18B20 wodoodporny</h3></a><b>15,00 zł</b></div>
+          <div class="tile-a"><a href="/sku/2"><h3>Zasilacz uniwersalny 12V</h3></a><b>18,00 zł</b></div>
+          <div class="tile-a"><a href="/sku/3"><h3>Termometr DS18B20</h3></a><b>22,00 zł</b></div>
+        </body></html>"""
+        report = inspect_search_page(
+            BeautifulSoup(html, "html.parser"),
+            "https://independent.example/search?text=DS18B20",
+            "czujnik temperatury DS18B20",
+        )
+        self.assertEqual(report["candidate_cards"], 3)
+        self.assertEqual(report["returned_cards"], 2)
+        self.assertEqual(report["rejected_nonmatching_cards"], 1)
+
     def test_detects_custom_product_cards_without_known_classes_or_product_urls(self):
         html = """<html><body><main>
           <section><div class="tile-a"><a href="/x/100"><img src="/a.jpg">
