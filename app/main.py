@@ -54,7 +54,7 @@ class SearchWorker(QThread):
                 item["engine"] = "Robot własny"
             errors = data.get("errors", [])
             if not results:
-                errors = [f"Sprawdzono {data.get('pages_checked', 0)} stron; brak potwierdzonej oferty."] + errors
+                errors = [f"Sprawdzono {data.get('pages_checked', 0)} stron; sklepy nie zwróciły odczytanych wyników."] + errors
             self.results_ready.emit(results, errors)
         except Exception as exc:
             self.results_ready.emit([], [f"Błąd własnego indeksowania: {exc}"])
@@ -337,7 +337,7 @@ class MainWindow(QMainWindow):
         seeds = []
         self.search_button.setEnabled(False)
         self.progress.show()
-        self.status.setText("Robot własny przeszukuje publiczne strony i mapy witryn…")
+        self.status.setText("Program wysyła zapytania do publicznych wyszukiwarek sklepów i odczytuje ich wyniki…")
         self.count.setText("Wyszukiwanie…")
         self.table.setRowCount(0)
         self.worker = SearchWorker(query, seeds=seeds)
@@ -359,7 +359,7 @@ class MainWindow(QMainWindow):
         self.progress.hide()
         self.count.setText(f"{len(results)} ofert")
         if errors and not results:
-            self.status.setText("Brak potwierdzonych ofert w sprawdzonych domenach. To nie dowodzi, że produktu nie ma w internecie.")
+            self.status.setText("Brak wyników odczytanych z wyszukiwarek sprawdzonych sklepów. To nie dowodzi, że produktu nie ma w tych sklepach.")
             QMessageBox.warning(
                 self, "Problem z wyszukiwaniem",
                 "Nie udało się pobrać wyników:\n\n" + "\n".join(errors[:6]) +
@@ -372,7 +372,7 @@ class MainWindow(QMainWindow):
             )
         elif results:
             self.status.setText(
-                "Wyniki pochodzą z własnego robota i lokalnego indeksu. Bez zewnętrznych wyszukiwarek."
+                "Wyniki pochodzą z wyszukiwarek poszczególnych sklepów; robot tylko odczytuje ich odpowiedzi."
             )
         else:
             self.status.setText("Brak wyników dla tego zapytania.")
