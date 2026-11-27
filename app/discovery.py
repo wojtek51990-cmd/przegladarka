@@ -267,6 +267,7 @@ class PoliteCrawler:
         self.errors = []
         self.pages_checked = 0
         self.pages_rejected = 0
+        self.store_search_reports = []
 
     def allowed(self, url):
         parsed = urlparse(url)
@@ -447,6 +448,19 @@ class PoliteCrawler:
                 action = normalize_url(urljoin(url, form.get("action") or url))
                 if not action or domain_of(action) != domain_of(url):
                     continue
+                # Reject embedded Google Custom Search forms even when the
+                # shop proxies them through a same-host endpoint.
+                form_blob = " ".join([
+                    str(form.get("class", "")), str(form.get("id", "")),
+                    str(form.get("action", "")),
+                    " ".join((field.get("name", "") + " " + field.get("value", ""))
+                             for field in form.select("input"))
+                ]).lower()
+                if ("google" in form_blob or "gcse" in form_blob
+                        or "sitesearch" in form_blob
+                        or re.search(r"client\\s*=\\s*pub-", form_blob)
+                        or urlparse(action).path.lower().endswith("links2.php")):
+                    continue
                 search_field = None
                 for field in form.select("input[name], textarea[name]"):
                     name = (field.get("name") or "").strip()
@@ -561,12 +575,35 @@ class PoliteCrawler:
                 continue
             self.pages_checked += 1
             title, snippet, offer_data, links, source_type, commercial_source, relevance = self.extract(final_url, html, query)
-            # Trust the store's own search results; read cards without re-scoring stock.
-            store_rows = extract_store_search_results(
-                BeautifulSoup(html, "html.parser"), final_url, query
+            # The shop search engine is authoritative: count and read only
+            # its explicit product cards. Product detail pages never create,
+            # validate, or overwrite search results.
+            page_soup = BeautifulSoup(html, "html.parser")
+            store_rows = extract_store_search_results(page_soup, final_url, query)
+            parsed_page = urlparse(final_url)
+            from urllib.parse import parse_qs
+            search_page = (
+                bool(re.search(r"/(?:search|szukaj|wyniki|catalogsearch)(?:/|$)", parsed_page.path, re.I))
+                or bool(set(parse_qs(parsed_page.query)) &
+                        {"q", "s", "search", "query", "text", "searchterm", "phrase"})
             )
+            if search_page:
+                page_text = re.sub(r"\\s+", " ", page_soup.get_text(" ", strip=True))
+                total_count = next((row.get("store_total_count") for row in store_rows
+                                    if row.get("store_total_count") is not None), None)
+                no_results = bool(re.search(
+                    r"(nie znaleziono (?:żadnych )?(?:produktów|wyników)|brak wyników|no products found|no results)",
+                    page_text, re.I))
+                self.store_search_reports.append({
+                    "domain": domain, "search_url": final_url,
+                    "returned_cards": len(store_rows),
+                    "store_reported_total": total_count,
+                    "product_exists": (total_count > 0) if total_count is not None
+                                      else (True if store_rows else (False if no_results else None)),
+                    "status": ("found" if store_rows or (total_count is not None and total_count > 0)
+                               else ("not_found" if no_results or total_count == 0 else "unknown")),
+                })
             for store_row in store_rows:
-                store_result_urls.add(store_row["url"])
                 self.db.save_offer(
                     store_row["url"], domain, store_row["title"],
                     store_row["price"], store_row["currency"],
@@ -574,7 +611,8 @@ class PoliteCrawler:
                 )
                 results.append({
                     **store_row, "domain": domain,
-                    "source": "Wynik wyszukiwarki sklepu", "relevance": 1.0,
+                    "source": "Wynik wyszukiwarki sklepu",
+                    "relevance": 1.0,
                 })
             if is_adult_content(final_url, title, snippet):
                 self.pages_rejected += 1
@@ -582,18 +620,7 @@ class PoliteCrawler:
             if commercial_source:
                 self.db.save_source(domain, source_type)
             is_offer, price, currency = offer_data
-            if is_offer and final_url in store_result_urls:
-                # A product detail page may enrich a card already returned by
-                # the store search, but can never create a new search result.
-                self.db.save_page(final_url, domain, title, snippet)
-                self.db.save_offer(final_url, domain, title, price, currency, snippet, query)
-                results.append({
-                    "title": title or domain, "url": final_url, "domain": domain,
-                    "price": price, "currency": currency, "snippet": snippet[:350],
-                    "availability": "", "source": "Wynik wyszukiwarki sklepu",
-                    "relevance": round(relevance, 2),
-                })
-            elif commercial_source and relevance >= 0.5:
+            if commercial_source and relevance >= 0.5:
                 # Keep a relevant commercial product/category page, not arbitrary pages.
                 self.db.save_page(final_url, domain, title, snippet, status="product_candidate")
             domain_counts[domain] = domain_counts.get(domain, 0) + 1
@@ -605,10 +632,6 @@ class PoliteCrawler:
             # visit its matching product detail links before generic seed/sitemap
             # URLs, otherwise the global page budget can be consumed first.
             path_lower = urlparse(final_url).path.lower()
-            if store_rows:
-                for link in reversed([row["url"] for row in store_rows]):
-                    if link not in seen and len(queue) < max_pages * 8:
-                        queue.appendleft(link)
             if domain == "rossmann.pl" and path_lower.startswith("/szukaj"):
                 priority_links = [
                     link for link in links
@@ -683,5 +706,6 @@ def discover(query: str, deep=False, db_path=None, extra_seeds=None):
         "errors": crawler.errors[:30],
         "seed_count": len(seed_urls),
         "direct_site_searches": direct_searches,
+        "store_search_reports": crawler.store_search_reports,
         "engine_independent": True,
     }
