@@ -45,11 +45,13 @@ class SearchWorker(QThread):
         super().__init__()
         self.query = query
         self.seeds = seeds or []
+        self.store_search_reports = []
 
     def run(self):
         try:
             data = discover(self.query, deep=True, extra_seeds=self.seeds)
             results = data.get("results", [])
+            self.store_search_reports = data.get("store_search_reports", [])
             for item in results:
                 item["engine"] = "Robot własny"
             errors = data.get("errors", [])
@@ -352,12 +354,28 @@ class MainWindow(QMainWindow):
             title.setToolTip(result["url"])
             title.setData(Qt.UserRole, result["url"])
             self.table.setItem(row, 0, title)
-            self.table.setItem(row, 1, QTableWidgetItem(result.get("snippet", "")))
+            snippet = result.get("snippet", "")
+            if result.get("store_total_count") is not None:
+                snippet = (f"Sklep zgłosił łącznie {result['store_total_count']} wyników; "
+                           f"robot odczytał {result.get('store_returned_cards', 0)} kart. " + snippet)
+            self.table.setItem(row, 1, QTableWidgetItem(snippet))
             self.table.setItem(row, 2, QTableWidgetItem(result.get("source", "Robot własny")))
             self.table.setItem(row, 3, QTableWidgetItem(domain_of(result["url"])))
         self.search_button.setEnabled(True)
         self.progress.hide()
-        self.count.setText(f"{len(results)} ofert")
+        self.count.setText(f"{len(results)} kart produktów")
+        reports = getattr(self.worker, "store_search_reports", [])
+        if reports:
+            summaries = []
+            for report in reports:
+                if report.get("store_reported_total") is not None:
+                    store_count = f"sklep zgłosił {report['store_reported_total']}"
+                else:
+                    store_count = f"odczytano {report.get('returned_cards', 0)} kart"
+                summaries.append(f"{report.get('domain')}: {store_count}")
+            self.status.setText("Wyniki sklepów (robot tylko odczytuje): " + "; ".join(summaries[:8]))
+        elif results:
+            self.status.setText("Odczytano karty produktów zwrócone przez wyszukiwarki sklepów; sklepy nie podały łącznej liczby wyników.")
         if errors and not results:
             self.status.setText("Brak wyników odczytanych z wyszukiwarek sprawdzonych sklepów. To nie dowodzi, że produktu nie ma w tych sklepach.")
             QMessageBox.warning(
@@ -366,10 +384,11 @@ class MainWindow(QMainWindow):
                 "\n\nDodaj adresy sklepów w zakładce Odkrywanie ofert, aby rozszerzyć indeks."
             )
         elif errors:
-            self.status.setText(
-                f"Pokazuję dostępne wyniki. Niedostępne źródła: {len(errors)}. "
-                "Szczegóły w diagnostyce."
-            )
+            if not reports:
+                self.status.setText(
+                    f"Pokazuję dostępne wyniki. Niedostępne źródła: {len(errors)}. "
+                    "Szczegóły w diagnostyce."
+                )
         elif results:
             self.status.setText(
                 "Wyniki pochodzą z wyszukiwarek poszczególnych sklepów; robot tylko odczytuje ich odpowiedzi."
