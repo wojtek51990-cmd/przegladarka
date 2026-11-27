@@ -11,6 +11,7 @@ Wynikiem wyszukiwarki sklepu jest źródło prawdy o tym, co sklep zwrócił. Ro
 1. **Rozpoznanie wyszukiwarki**
    - Analiza pól formularzy, etykiet, placeholderów, przycisków i atrybutów dostępności.
    - Rozpoznawanie publicznych formularzy GET i POST, tylko gdy pole zapytania jest jednoznaczne.
+   - Odrzucanie osadzonych wyszukiwarek zewnętrznych (np. Google Custom Search), nawet jeśli formularz znajduje się w HTML sklepu.
    - Tylko formularze samej domeny. Pola haseł, tokenów, sesji i dane konta są pomijane.
    - Rozpoznane platformy mogą dostarczać dodatkową wskazówkę, ale nie są warunkiem wyszukiwania.
 
@@ -24,6 +25,7 @@ Wynikiem wyszukiwarki sklepu jest źródło prawdy o tym, co sklep zwrócił. Ro
    - Analiza powtarzalnych elementów DOM, podobieństwa rodzeństwa, obrazów, nagłówków, danych Schema.org, identyfikatorów produktu, lokalnych pól ceny i dostępności.
    - Brak zależności od ścieżek typu /produkt/ oraz klas typu product-card.
    - Karta musi mieć link tej samej domeny i kilka niezależnych przesłanek, że reprezentuje pojedynczy produkt.
+   - Po rozpoznaniu karty jej tytuł musi pasować do co najmniej jednego wyróżniającego terminu zapytania; odrzucane są przypadkowe karty z katalogu, gdy sklep zignorował frazę.
    - Kontenery list, menu, artykuły i nawigacja nie są produktami.
 
 4. **Odczyt danych**
@@ -64,4 +66,4 @@ Nie istnieje uniwersalny sposób zagwarantowania odczytu każdej witryny. Sklep 
 
 ## Status implementacji
 
-Pierwsza wersja silnika adaptacyjnego jest dodana w `app/adaptive_search.py` i zintegrowana z crawlerem. Obejmuje rozpoznawanie publicznych formularzy GET/POST, heurystyczne rozpoznawanie kart DOM i opcjonalne renderowanie Chromium. Przed uznaniem projektu za gotowy wymagane są testy automatyczne oraz testy na żywych sklepach.
+Pierwsza wersja silnika adaptacyjnego jest dodana w `app/adaptive_search.py` i zintegrowana z crawlerem. Po audycie przebiegu Actions dodano odrzucanie formularzy z sygnaturą zewnętrznego Google Custom Search oraz filtrowanie kart po tytule względem charakterystycznych słów zapytania. Obejmuje rozpoznawanie publicznych formularzy GET/POST, heurystyczne rozpoznawanie kart DOM i opcjonalne renderowanie Chromium. Przed uznaniem projektu za gotowy wymagane są testy automatyczne oraz testy na żywych sklepach.
