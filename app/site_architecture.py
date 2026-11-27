@@ -194,7 +194,7 @@ def extract_store_search_results(soup, page_url: str, query: str) -> list[dict]:
     )
     card_class = re.compile(
         r"(^|[-_])(product[-_]?(?:card|item|tile|miniature|box|container)|"
-        r"item[-_]?product|product)([-_]|$)", re.I
+        r"item[-_]?product)([-_]|$)", re.I
     )
     rows, seen = [], set()
     for anchor in soup.select("a[href]"):
