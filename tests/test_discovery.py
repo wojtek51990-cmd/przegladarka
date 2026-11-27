@@ -310,7 +310,7 @@ class DiscoveryTests(unittest.TestCase):
 
     def test_store_search_reports_its_own_total_count(self):
         from bs4 import BeautifulSoup
-        html = """<html><body><p>Znaleziono 37 produktów</p>
+        html = """<html><body><p>Wyświetlono 1-2 z 37 produktów</p>
           <div class="product-card"><a href="/produkt/a">Czujnik DS18B20 A</a></div>
           <div class="product-card"><a href="/produkt/b">Czujnik DS18B20 B</a></div>
         </body></html>"""
