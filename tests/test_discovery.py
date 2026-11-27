@@ -288,6 +288,48 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(data["price"], "12.50")
         self.assertEqual(data["currency"], "PLN")
 
+    def test_only_explicit_product_cards_are_counted_not_generic_article_or_list_links(self):
+        from bs4 import BeautifulSoup
+        html = """<html><body>
+          <div class="search-results"><ul>
+            <li><a href="/aktualnosci/1">Aktualność DS18B20</a></li>
+            <li><a href="/produkt/ds18b20">Czujnik DS18B20</a></li>
+          </ul></div>
+          <div class="product-card" data-product-id="123">
+            <a class="product-title" href="/produkt/ds18b20-real">Czujnik DS18B20 wodoodporny</a>
+            <span class="price">12,50 zł</span>
+          </div>
+          <article><a href="/produkt/poradnik">Poradnik DS18B20</a></article>
+        </body></html>"""
+        rows = extract_store_search_results(
+            BeautifulSoup(html, "html.parser"),
+            "https://shop.example/search?q=DS18B20", "DS18B20")
+        self.assertEqual([row["url"] for row in rows],
+                         ["https://shop.example/produkt/ds18b20-real"])
+        self.assertEqual(rows[0]["store_returned_cards"], 1)
+
+    def test_store_search_reports_its_own_total_count(self):
+        from bs4 import BeautifulSoup
+        html = """<html><body><p>Znaleziono 37 produktów</p>
+          <div class="product-card"><a href="/produkt/a">Czujnik DS18B20 A</a></div>
+          <div class="product-card"><a href="/produkt/b">Czujnik DS18B20 B</a></div>
+        </body></html>"""
+        rows = extract_store_search_results(
+            BeautifulSoup(html, "html.parser"),
+            "https://shop.example/search?q=DS18B20", "DS18B20")
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["store_total_count"], 37)
+        self.assertEqual(rows[0]["store_returned_cards"], 2)
+        self.assertTrue(rows[0]["store_product_exists"])
+
+    def test_search_page_with_explicit_zero_products_returns_no_cards(self):
+        from bs4 import BeautifulSoup
+        html = "<html><body><p>Znaleziono 0 produktów</p><p>Brak wyników</p></body></html>"
+        rows = extract_store_search_results(
+            BeautifulSoup(html, "html.parser"),
+            "https://shop.example/search?q=notfound", "notfound")
+        self.assertEqual(rows, [])
+
 
 if __name__ == "__main__":
     unittest.main()
