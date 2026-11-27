@@ -6,6 +6,7 @@ No POST forms, private APIs, login flows, CAPTCHA or anti-bot bypasses.
 """
 from __future__ import annotations
 
+import json
 import re
 from urllib.parse import quote, urlencode, urljoin, urlparse, urlunparse, parse_qs
 
@@ -204,7 +205,7 @@ def extract_store_search_results(soup, page_url: str, query: str, force_search: 
         return []
 
     report = inspect_search_page(soup, page_url, query, raw_response=raw_response)
-    legacy_summary = extract_store_search_summary(soup)
+    legacy_summary = extract_store_search_summary(soup, raw_response=raw_response)
     total_count = report["store_total_count"]
     if total_count is None:
         total_count = legacy_summary["store_total_count"]
