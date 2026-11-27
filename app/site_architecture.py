@@ -125,63 +125,111 @@ def extract_product_metadata(soup) -> dict:
 
 
 def extract_store_search_results(soup, page_url: str, query: str) -> list[dict]:
-    """Read cards returned by a store's own search page; never infer stock."""
-    from urllib.parse import urlparse, parse_qs
+    """Read only product cards returned by a first-party store search page.
+
+    The store decides which products match. This parser does not rank or
+    re-check availability; it reports the cards and any count/status text
+    explicitly rendered by the store.
+    """
+    from urllib.parse import parse_qs, urlparse
     parsed = urlparse(page_url)
-    params = {key.lower() for key in parse_qs(parsed.query)}
-    search_path = any(part in parsed.path.lower() for part in
-                      ("/search", "/szukaj", "/wyniki", "/catalogsearch"))
-    if not (search_path or params & {"q", "s", "search", "query", "text", "searchterm"}):
+    params = {key.lower(): values for key, values in parse_qs(parsed.query).items()}
+    search_path = bool(re.search(r"/(?:search|szukaj|wyniki|catalogsearch)(?:/|$)", parsed.path, re.I))
+    has_search_param = any(key in params for key in
+                           ("q", "s", "search", "query", "text", "searchterm", "phrase"))
+    if not (search_path or has_search_param):
         return []
+
+    # Product-card wrappers only. Generic <li>, <article>, or page-wide
+    # containers are deliberately not considered product cards.
+    card_selector = (
+        '[data-product-id], [data-product], [itemtype*="schema.org/Product" i], '
+        '[class~="product-card"], [class~="product-item"], [class~="product-tile"], '
+        '[class~="product-miniature"], [class~="product-box"], [class~="productbox"], '
+        '[class~="product-container"]'
+    )
+    product_href = re.compile(
+        r"/(?:produkt|product|products|p|item)(?:/|[-_])", re.I
+    )
     price_re = re.compile(
-        r"(?<!\w)(\d{1,3}(?:[ .]\d{3})*(?:,\d{2})?|\d+(?:[,.]\d{2})?)\s?(zł|PLN|EUR|€|USD|\$)", re.I)
+        r"(?<!\\w)(\\d{1,3}(?:[ .]\\d{3})*(?:,\\d{2})?|\\d+(?:[,.]\\d{2})?)\\s?(zł|PLN|EUR|€|USD|\\$)", re.I)
     stock_re = re.compile(
-        r"(dostępny(?:\s+od\s+ręki)?|dostepny(?:\s+od\s+reki)?|brak\s+w\s+magazynie|"
-        r"niedostępny|niedostepny|na\s+zamówienie|na\s+zamowienie|w\s+magazynie|"
-        r"in\s+stock|out\s+of\s+stock|available|unavailable)", re.I)
-    results, seen = [], set()
-    product_href = re.compile(r"/(produkt|product|products|p|item)(/|[-_])", re.I)
+        r"(dostępny(?:\\s+od\\s+ręki)?|dostepny(?:\\s+od\\s+reki)?|brak\\s+w\\s+magazynie|"
+        r"niedostępny|niedostepny|na\\s+zamówienie|na\\s+zamowienie|w\\s+magazynie|"
+        r"in\\s+stock|out\\s+of\\s+stock|available|unavailable)", re.I)
+    count_patterns = (
+        re.compile(r"(?:znaleziono|wyszukano|wyników|wyniki|products found|results found)\\D{0,30}(\\d{1,6})", re.I),
+        re.compile(r"(\\d{1,6})\\s+(?:produktów|produkt|products|wyników|results)", re.I),
+    )
+    page_text = re.sub(r"\\s+", " ", soup.get_text(" ", strip=True))
+    total_count = None
+    for pattern in count_patterns:
+        match = pattern.search(page_text)
+        if match:
+            total_count = int(match.group(1))
+            break
+    no_results = bool(re.search(
+        r"(nie znaleziono (?:żadnych )?(?:produktów|wyników)|brak wyników|no products found|no results)",
+        page_text, re.I))
+    rows, seen = [], set()
     for anchor in soup.select("a[href]"):
         href = (anchor.get("href") or "").strip()
         if not href or href.startswith(("#", "javascript:", "mailto:")):
             continue
         target = urljoin(page_url, href)
-        parsed_target = urlparse(target)
-        if parsed_target.scheme not in ("http", "https") or parsed_target.netloc.lower() != parsed.netloc.lower():
+        target_parsed = urlparse(target)
+        if (target_parsed.scheme not in ("http", "https")
+                or target_parsed.netloc.lower() != parsed.netloc.lower()
+                or target in seen or not product_href.search(target_parsed.path)):
             continue
-        if target in seen or target.rstrip("/") == page_url.rstrip("/"):
-            continue
-        node, card = anchor.parent, None
-        for _ in range(5):
+        # Find the nearest explicitly product-specific card wrapper.
+        card = None
+        node = anchor
+        for _ in range(7):
             if node is None:
                 break
-            classes = " ".join(node.get("class", [])) if hasattr(node, "get") else ""
-            node_id = node.get("id", "") if hasattr(node, "get") else ""
-            if (node.name in ("article", "li") or node.has_attr("data-product")
-                    or node.has_attr("data-product-id")
-                    or re.search(r"product|item|card", classes + " " + node_id, re.I)):
-                card = node
-                break
-            node = node.parent
-        if card is None and not product_href.search(parsed_target.path):
-            continue
-        card = card or anchor.parent
-        card_text = re.sub(r"\s+", " ", card.get_text(" ", strip=True)).strip()
+            if getattr(node, "select_one", None) and node.select_one(card_selector):
+                # Avoid choosing a wrapper that merely contains a nested card.
+                pass
+            if getattr(node, "name", None) and node.select_one is not None:
+                classes = node.get("class", [])
+                node_id = node.get("id", "")
+                data_product = node.has_attr("data-product") or node.has_attr("data-product-id")
+                typed_product = "schema.org/Product" in str(node.get("itemtype", ""))
+                own_classes = any(re.search(
+                    r"(^|[-_ ])product[-_ ]?(card|item|tile|miniature|box|container)([-_ ]|$)",
+                    str(value), re.I) for value in classes)
+                own_id = bool(re.search(r"product[-_ ]?(card|item|tile|box)", str(node_id), re.I))
+                if data_product or typed_product or own_classes or own_id:
+                    card = node
+                    break
+            node = getattr(node, "parent", None)
+        card = card or anchor
         title = anchor.get_text(" ", strip=True)
-        if not title:
+        if not title and card is not anchor:
             heading = card.select_one("h1, h2, h3, h4, [class*='title'], [class*='name']")
             title = heading.get_text(" ", strip=True) if heading else ""
         if not title or len(title) > 300:
             continue
-        price_match, stock_match = price_re.search(card_text), stock_re.search(card_text)
-        results.append({
+        card_text = re.sub(r"\\s+", " ", card.get_text(" ", strip=True)).strip()
+        price_match = price_re.search(card_text)
+        stock_match = stock_re.search(card_text)
+        rows.append({
             "title": title, "url": target,
             "price": price_match.group(1) if price_match else "",
             "currency": price_match.group(2).upper() if price_match else "",
             "availability": stock_match.group(0) if stock_match else "",
             "snippet": card_text[:500],
+            "store_total_count": total_count,
+            "store_reported_no_results": no_results,
         })
         seen.add(target)
-        if len(results) >= 80:
-            break
-    return results
+    # A store's explicit count may exceed the cards loaded on the current page.
+    # Keep both values: returned_cards is what was actually read, total_count
+    # is what the store itself reported. Never fabricate missing product rows.
+    for row in rows:
+        row["store_returned_cards"] = len(rows)
+        row["store_product_exists"] = (total_count > 0) if total_count is not None else True
+    if not rows and no_results:
+        return []
+    return rows
