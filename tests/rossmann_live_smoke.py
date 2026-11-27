@@ -24,12 +24,18 @@ def main():
     print(f"Direct site searches: {data.get('direct_site_searches', [])}")
     print(f"Rossmann search reports: {reports}")
     print(f"Rossmann NIVEA cards read from store search: {len(results)}")
+    prices = [item.get("price", "") for item in results if item.get("price")]
+    print(f"Distinct card-scoped prices: {len(set(prices))}")
     for item in results[:10]:
         print(f"- {item.get('title')} | {item.get('price','')} {item.get('currency','')} | {item.get('url')}")
     for error in data.get("errors", [])[:15]:
         print(f"NOTE: {error}")
     if not reports or not results:
         raise SystemExit("FAIL: Rossmann search result cards were not read from the store search page.")
+    if not prices:
+        raise SystemExit("FAIL: no price was read from inside a Rossmann product card.")
+    if len(results) >= 5 and len(set(prices)) < 2:
+        raise SystemExit("FAIL: product cards appear to share one page-level price instead of individual prices.")
 
 if __name__ == "__main__":
     main()
