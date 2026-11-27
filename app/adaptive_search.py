@@ -18,7 +18,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 
 SEARCH_WORDS = re.compile(
-    r"(search|szukaj|wyszuk|query|keyword|phrase|product|produkt|catalog|katalog)",
+    r"(search|szukaj|wyszuk|query|keyword|phrase|term)",
     re.I,
 )
 SENSITIVE = re.compile(r"(csrf|nonce|token|auth|password|passwd|session|cookie|login|account)", re.I)
@@ -38,7 +38,7 @@ STOCK_RE = re.compile(
 )
 SEARCH_NAMES = {
     "q", "query", "search", "s", "term", "keyword", "phrase", "text",
-    "searchterm", "search_query", "product", "products", "string",
+    "searchterm", "search_query", "string",
 }
 
 
